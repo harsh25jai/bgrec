@@ -18,6 +18,7 @@ New-Item -ItemType Directory -Path $ReleaseDir | Out-Null
 Copy-Item $Exe $ReleaseDir
 Copy-Item (Join-Path $Root "install-portable.ps1") $ReleaseDir
 Copy-Item (Join-Path $Root "install-portable.cmd") $ReleaseDir
+Copy-Item (Join-Path $Root "scripts\windows-ensure-ffmpeg.ps1") $ReleaseDir
 Copy-Item (Join-Path $Root "uninstall.ps1") $ReleaseDir
 Copy-Item (Join-Path $Root "config\config.toml.example") $ReleaseDir
 Copy-Item (Join-Path $Root "README.md") $ReleaseDir
@@ -43,7 +44,7 @@ Background Audio Recorder — portable install
    bgrec login-google
    bgrec start --background
 
-Requires ffmpeg on PATH for FLAC/MP3: winget install Gyan.FFmpeg
+ffmpeg is installed automatically by install-portable.cmd (via winget) if missing.
 "@ | Set-Content (Join-Path $ReleaseDir "INSTALL.txt") -Encoding UTF8
 
 if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
