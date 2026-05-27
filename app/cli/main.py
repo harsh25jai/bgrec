@@ -48,6 +48,13 @@ from app.config.migrate import load_config_meta
 from app.updater.apply import apply_update, is_ota_target_install, read_current_meta, rollback_exe
 from app.updater.service import check_for_updates, ensure_update_repo, try_auto_apply
 from app.health.report import assess_health, format_issues_for_status
+from app.install.portable import (
+    bin_exe_path,
+    get_portable_bin_version,
+    is_running_installed_binary,
+    portable_install_exists,
+    wrong_executable_hint,
+)
 from app.version import get_version
 
 app = typer.Typer(
@@ -195,7 +202,15 @@ def status() -> None:
     else:
         table.add_row("Google auth", f"[yellow]{auth_msg}[/yellow]")
     table.add_row("Startup registry", str(WindowsStartupManager().is_enabled()))
-    table.add_row("App version", get_version())
+    service_ver = get_portable_bin_version()
+    if service_ver and not is_running_installed_binary():
+        table.add_row("App version (service)", service_ver)
+        table.add_row("CLI version (this exe)", get_version())
+        hint = wrong_executable_hint()
+        if hint:
+            table.add_row("Note", f"[yellow]{hint}[/yellow]")
+    else:
+        table.add_row("App version", service_ver or get_version())
     table.add_row("OTA auto-apply", "on" if cfg.update.auto_apply else "off")
     if cfg.update.enabled and cfg.update.auto_apply:
         table.add_row("OTA check interval", f"{cfg.update.check_interval_hours}h (also on each daemon start)")
@@ -216,24 +231,43 @@ def version(
         "--check-update",
         help="Query GitHub for a newer release (same as bgrec update --check).",
     ),
+    porcelain: bool = typer.Option(
+        False,
+        "--porcelain",
+        help="Print only the version of this executable (for scripts).",
+    ),
 ) -> None:
     """Show installed version and OTA status."""
+    if porcelain:
+        console.print(get_version())
+        return
+
     cfg = _load()
     paths = cfg.ensure_directories()
     meta = load_config_meta(paths["root"])
     ota = read_current_meta()
+    service_ver = get_portable_bin_version()
 
     table = Table(title="bgrec version")
     table.add_column("Field", style="cyan")
     table.add_column("Value")
-    table.add_row("Installed", get_version())
+    if service_ver and not is_running_installed_binary():
+        table.add_row("Service binary", f"[green]{service_ver}[/green] ({bin_exe_path()})")
+        table.add_row("This command", f"{get_version()} ({sys.executable})")
+    else:
+        table.add_row("Installed", get_version())
     table.add_row("Config schema", str(get_config_schema_version()))
     table.add_row("OTA capable", "yes" if is_ota_target_install() else "no (dev/git install)")
     if ota.get("version"):
         table.add_row("Last OTA apply", str(ota.get("version")))
     if meta.get("last_merged_at"):
         table.add_row("Config last merged", str(int(meta["last_merged_at"])))
-    table.add_row("Executable", sys.executable)
+    if not is_running_installed_binary() and service_ver:
+        hint = wrong_executable_hint()
+        if hint:
+            table.add_row("Note", f"[yellow]{hint}[/yellow]")
+    else:
+        table.add_row("Executable", sys.executable)
     console.print(table)
 
     if check_update:
@@ -311,10 +345,14 @@ def update(
     console.print(f"[cyan]Applying update {result.manifest.version}…[/cyan]")
     applied = apply_update(result.manifest, force=force, restart=True)
     if applied.success:
-        console.print(f"[green]{applied.message}[/green]")
+        lines = applied.message.splitlines()
+        console.print(f"[green]{lines[0]}[/green]")
+        for line in lines[1:]:
+            console.print(f"[yellow]{line}[/yellow]")
         if applied.backup_exe:
             console.print(f"[dim]Backup: {applied.backup_exe}[/dim]")
-        console.print("[dim]Verify: bgrec version --check-update[/dim]")
+        verify = bin_exe_path() if portable_install_exists() else Path(sys.executable)
+        console.print(f'[dim]Verify: "{verify}" version[/dim]')
     else:
         console.print(f"[red]{applied.message}[/red]")
         raise typer.Exit(1)

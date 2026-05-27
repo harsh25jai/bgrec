@@ -162,8 +162,11 @@ def spawn_background() -> int:
     paths["logs"].mkdir(parents=True, exist_ok=True)
     spawn_log = paths["logs"] / "daemon-spawn.log"
 
-    if getattr(sys, "frozen", False):
-        cmd = [sys.executable, "start", "--foreground"]
+    from app.install.portable import preferred_bgrec_executable
+
+    exe = preferred_bgrec_executable()
+    if getattr(sys, "frozen", False) or exe.name.lower() == "bgrec.exe":
+        cmd = [str(exe), "start", "--foreground"]
     else:
         cmd = [sys.executable, "-m", "app.cli.main", "start", "--foreground"]
 

@@ -12,6 +12,13 @@ from pathlib import Path
 
 from app.config.migrate import merge_config_defaults
 from app.config.settings import default_config_path, default_data_dirs
+from app.install.portable import (
+    bin_exe_path,
+    is_running_installed_binary,
+    portable_install_exists,
+    preferred_bgrec_executable,
+    wrong_executable_hint,
+)
 from app.logging.setup import get_logger
 from app.service.daemon import StopResult, stop_daemon
 from app.updater.download import download_file
@@ -35,22 +42,19 @@ def updates_root() -> Path:
     return default_data_dirs()["root"] / "updates"
 
 
-def bin_exe_path() -> Path:
-    return default_data_dirs()["root"] / "bin" / "bgrec.exe"
-
-
 def is_ota_target_install() -> bool:
-    """True when this process can replace the installed portable binary."""
+    """True when the portable install layout exists under %LOCALAPPDATA%\\bgrec\\bin."""
     if sys.platform != "win32":
         return False
-    exe = Path(sys.executable).resolve()
-    if getattr(sys, "frozen", False):
+    if portable_install_exists():
         return True
+    if getattr(sys, "frozen", False):
+        return False
     expected = bin_exe_path()
     try:
-        return exe == expected.resolve()
+        return Path(sys.executable).resolve() == expected.resolve()
     except OSError:
-        return expected.exists() and exe.name.lower() == "bgrec.exe"
+        return expected.exists() and Path(sys.executable).name.lower() == "bgrec.exe"
 
 
 def write_current_meta(version: str, config_schema_version: int) -> None:
@@ -156,9 +160,13 @@ def apply_update(
 
             spawn_background()
 
+        message = f"Updated to {manifest.version} at {bin_exe}"
+        hint = wrong_executable_hint()
+        if hint:
+            message = f"{message}\n{hint}"
         return ApplyResult(
             True,
-            f"Updated to {manifest.version}",
+            message,
             installed_version=manifest.version,
             backup_exe=backup if backup.exists() else None,
         )

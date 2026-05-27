@@ -97,7 +97,7 @@ if (-not $NoAutoStart) {
     if ($statusText -match 'Working properly\s+\|\s+yes') {
         Write-Host "Recorder is running and healthy." -ForegroundColor Green
     } elseif ($statusText -match 'Running\s+\|\s+yes') {
-        Write-Host "Recorder process is up but has issues — run: bgrec status" -ForegroundColor Yellow
+        Write-Host "Recorder process is up but has issues - run: bgrec status" -ForegroundColor Yellow
     } else {
         Write-Host "Daemon may still be starting. Check: bgrec status" -ForegroundColor Yellow
         Write-Host "Logs: $InstallDir\logs\daemon-spawn.log" -ForegroundColor DarkGray

@@ -19,9 +19,9 @@ class WindowsStartupManager:
 
     @staticmethod
     def _default_executable() -> Path:
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable)
-        return Path(sys.executable)
+        from app.install.portable import preferred_bgrec_executable
+
+        return preferred_bgrec_executable()
 
     def _command(self) -> str:
         import shutil
