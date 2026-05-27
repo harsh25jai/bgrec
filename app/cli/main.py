@@ -39,6 +39,11 @@ from app.service.daemon import (
 from app.service.state import DaemonState
 from app.startup.windows_startup import WindowsStartupManager
 from app.uploader.drive_client import DriveClient
+from app.config.migrate import get_config_schema_version, merge_config_defaults
+from app.config.migrate import load_config_meta
+from app.updater.apply import apply_update, is_ota_target_install, read_current_meta, rollback_exe
+from app.updater.service import check_for_updates, ensure_update_repo, try_auto_apply
+from app.version import get_version
 
 app = typer.Typer(
     name="bgrec",
@@ -176,8 +181,144 @@ def status() -> None:
     else:
         table.add_row("Google auth", f"[yellow]{auth_msg}[/yellow]")
     table.add_row("Startup registry", str(WindowsStartupManager().is_enabled()))
+    table.add_row("App version", get_version())
+    table.add_row("OTA auto-apply", "on" if cfg.update.auto_apply else "off")
+    ota_meta = read_current_meta()
+    if ota_meta.get("version"):
+        table.add_row("Last OTA version", str(ota_meta.get("version")))
+    table.add_row("Config schema", str(get_config_schema_version()))
 
     console.print(table)
+
+
+@app.command()
+def version(
+    check_update: bool = typer.Option(
+        False,
+        "--check-update",
+        help="Query GitHub for a newer release (same as bgrec update --check).",
+    ),
+) -> None:
+    """Show installed version and OTA status."""
+    cfg = _load()
+    paths = cfg.ensure_directories()
+    meta = load_config_meta(paths["root"])
+    ota = read_current_meta()
+
+    table = Table(title="bgrec version")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Installed", get_version())
+    table.add_row("Config schema", str(get_config_schema_version()))
+    table.add_row("OTA capable", "yes" if is_ota_target_install() else "no (dev/git install)")
+    if ota.get("version"):
+        table.add_row("Last OTA apply", str(ota.get("version")))
+    if meta.get("last_merged_at"):
+        table.add_row("Config last merged", str(int(meta["last_merged_at"])))
+    table.add_row("Executable", sys.executable)
+    console.print(table)
+
+    if check_update:
+        console.print()
+        _print_update_check(cfg)
+
+
+@app.command()
+def update(
+    check: bool = typer.Option(False, "--check", help="Check for updates only."),
+    check_only: bool = typer.Option(
+        False,
+        "--check-only",
+        help="Exit 0 if up to date, 1 if update available, 2 on error.",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Apply without confirmation."),
+    unattended: bool = typer.Option(
+        False,
+        "--unattended",
+        help="Automatic apply (used by OTA scheduler; no prompts).",
+    ),
+    rollback: bool = typer.Option(False, "--rollback", help="Restore previous bgrec.exe.bak."),
+    force: bool = typer.Option(False, "--force", help="Apply even if daemon stop fails."),
+) -> None:
+    """Check for or apply over-the-air updates (portable install)."""
+    cfg = ensure_update_repo(_load())
+
+    if rollback:
+        result = rollback_exe()
+        if result.success:
+            console.print(f"[green]{result.message}[/green]")
+        else:
+            console.print(f"[red]{result.message}[/red]")
+            raise typer.Exit(1)
+        return
+
+    result = check_for_updates(cfg)
+    do_apply = yes or unattended or (cfg.update.auto_apply and not check and not check_only)
+
+    if check or check_only or not do_apply:
+        _print_update_check(cfg, result)
+        if check_only:
+            if result.error:
+                raise typer.Exit(2)
+            raise typer.Exit(1 if result.update_available else 0)
+        if check or not result.update_available:
+            return
+        if not yes and not unattended:
+            console.print("[dim]Run: bgrec update --yes[/dim]")
+            return
+
+    if not result.manifest:
+        raise typer.Exit(1)
+
+    if not result.update_available:
+        if not unattended:
+            console.print(f"[green]{result.message}[/green]")
+        raise typer.Exit(0)
+
+    if not result.ota_capable:
+        if not unattended:
+            console.print(
+                "[yellow]OTA apply requires portable install at %LOCALAPPDATA%\\bgrec\\bin\\bgrec.exe[/yellow]"
+            )
+        raise typer.Exit(1)
+
+    if not yes and not unattended and not cfg.update.auto_apply:
+        typer.confirm(f"Download and install {result.manifest.version}?", abort=True)
+
+    if unattended:
+        if try_auto_apply(cfg, result, unattended=True):
+            raise typer.Exit(0)
+        raise typer.Exit(1)
+
+    console.print(f"[cyan]Applying update {result.manifest.version}…[/cyan]")
+    applied = apply_update(result.manifest, force=force, restart=True)
+    if applied.success:
+        console.print(f"[green]{applied.message}[/green]")
+        if applied.backup_exe:
+            console.print(f"[dim]Backup: {applied.backup_exe}[/dim]")
+        console.print("[dim]Verify: bgrec version --check-update[/dim]")
+    else:
+        console.print(f"[red]{applied.message}[/red]")
+        raise typer.Exit(1)
+
+
+def _print_update_check(cfg: AppConfig | None = None, result=None) -> None:
+    result = result or check_for_updates(cfg or _load())
+    if result.error and not result.remote_version:
+        console.print(f"[red]{result.message}[/red]")
+        if "github_repo" in (result.message or ""):
+            console.print(
+                "[dim]Set in config.toml: [update] github_repo = \"owner/bgrec\"[/dim]"
+            )
+        return
+    if result.update_available:
+        console.print(f"[yellow]{result.message}[/yellow]")
+        if result.manifest and result.manifest.notes:
+            console.print(f"[dim]{result.manifest.notes}[/dim]")
+    else:
+        console.print(f"[green]{result.message}[/green]")
+    if result.manifest_url:
+        console.print(f"[dim]Manifest: {result.manifest_url}[/dim]")
 
 
 @app.command("login-google")
@@ -212,13 +353,20 @@ def upload_pending() -> None:
     console.print(f"[green]Uploaded {count} file(s)[/green]")
 
 
-@app.command()
-def config(
+config_app = typer.Typer(help="View or update configuration.")
+app.add_typer(config_app, name="config")
+
+
+@config_app.callback(invoke_without_command=True)
+def config_cmd(
+    ctx: typer.Context,
     show: bool = typer.Option(True, "--show/--edit", help="Show current config."),
     key: Optional[str] = typer.Option(None, help="Set key using dotted path, e.g. recording.sample_rate"),
     value: Optional[str] = typer.Option(None, help="New value for key."),
 ) -> None:
     """View or update configuration."""
+    if ctx.invoked_subcommand is not None:
+        return
     cfg = _load()
     if key and value is not None:
         _set_nested(cfg, key, _parse_value(value))
@@ -229,6 +377,39 @@ def config(
         return
     if show:
         console.print_json(json.dumps(_config_display(cfg)))
+
+
+@config_app.command("migrate")
+def config_migrate(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show keys that would be added."),
+    apply_recommended: bool = typer.Option(
+        False,
+        "--apply-recommended",
+        help="Apply documented default flips (e.g. delete_after_upload).",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation for --apply-recommended."),
+) -> None:
+    """Merge missing keys from config.toml.example into your config.toml."""
+    if apply_recommended and not yes and not dry_run:
+        typer.confirm("Apply recommended config changes?", abort=True)
+    result = merge_config_defaults(dry_run=dry_run, apply_recommended=apply_recommended)
+    if not result.changed:
+        console.print("[green]Config is up to date (no missing keys).[/green]")
+        return
+    if dry_run:
+        console.print("[yellow]Would add keys:[/yellow]")
+        for k in result.keys_added:
+            console.print(f"  + {k}")
+        if apply_recommended:
+            console.print("[yellow]Would apply recommended:[/yellow]", result.recommended_applied)
+        return
+    console.print(f"[green]Config updated: {result.config_path}[/green]")
+    if result.backup_path:
+        console.print(f"[dim]Backup: {result.backup_path}[/dim]")
+    for k in result.keys_added:
+        console.print(f"  + {k}")
+    for k in result.recommended_applied:
+        console.print(f"  ~ {k}")
 
 
 @app.command("list-recordings")

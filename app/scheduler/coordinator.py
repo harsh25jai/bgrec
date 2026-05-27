@@ -67,6 +67,7 @@ class ServiceCoordinator:
             on_resume=self._on_system_resume,
         )
         self._instance_lock = DaemonInstanceLock()
+        self._update_scheduler = None
 
     def _on_chunk(self, path: Path) -> None:
         self.state.last_chunk_at = time.time()
@@ -123,6 +124,10 @@ class ServiceCoordinator:
 
         self.sleep_guard.acquire()
         self.recorder.start()
+        from app.updater.scheduler import UpdateScheduler
+
+        self._update_scheduler = UpdateScheduler(self.config)
+        self._update_scheduler.start()
         self.upload_queue.start_worker()
         if self.config.upload.enabled:
             recovered = self.upload_queue.nudge()
@@ -135,6 +140,8 @@ class ServiceCoordinator:
         log.info("Service coordinator started (pid={})", self.state.pid)
 
     def stop(self) -> None:
+        if self._update_scheduler:
+            self._update_scheduler.stop()
         self.watchdog.stop()
         self.recorder.stop()
         self.upload_queue.stop_worker()

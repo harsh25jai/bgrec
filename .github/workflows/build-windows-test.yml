@@ -1,0 +1,87 @@
+# Build portable ZIP on push to test branch — no GitHub Release (QA installs only).
+# Trigger from Mac: ./scripts/build-windows-test-from-mac.sh
+
+name: Build Windows EXE (test)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test
+
+concurrency:
+  group: build-windows-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-windows.txt
+          pip install -e .
+
+      - name: Write bundled OTA metadata
+        shell: bash
+        run: echo "${{ github.repository }}" > config/github-repo.txt
+
+      - name: Build executable
+        run: python scripts/build_exe.py
+
+      - name: Package test ZIP
+        shell: pwsh
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: ./scripts/package-windows-release.ps1 -Channel test
+
+      - name: Upload test portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: bgrec-windows-test
+          path: dist/bgrec-Windows-test.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload bgrec.exe (optional direct use)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bgrec-exe-test
+          path: dist/bgrec.exe
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Job summary
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path pyproject.toml -Pattern '^\s*version\s*=\s*"([^"]+)"').Matches.Groups[1].Value
+          @"
+          ## Test build succeeded
+
+          | Field | Value |
+          |-------|-------|
+          | Branch | ``${{ github.ref_name }}`` |
+          | Commit | ``${{ github.sha }}`` |
+          | App version | ``$version`` |
+          | Artifact | **bgrec-windows-test** → ``bgrec-Windows-test.zip`` |
+
+          ### Install on a Windows PC
+
+          1. Open this workflow run → **Artifacts** → download **bgrec-windows-test**.
+          2. Unzip and run ``install-portable.cmd``.
+          3. New terminal: ``bgrec login-google`` then ``bgrec start --background``.
+
+          This is **not** published as a GitHub Release. Production OTA will use **main** releases only.
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8

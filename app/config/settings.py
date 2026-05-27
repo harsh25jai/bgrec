@@ -16,6 +16,8 @@ except ModuleNotFoundError:
 
 import tomli_w
 
+CONFIG_SCHEMA_VERSION = 1
+
 
 def _app_data_dir() -> Path:
     base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
@@ -96,6 +98,17 @@ class GoogleConfig:
 
 
 @dataclass
+class UpdateConfig:
+    enabled: bool = True
+    github_repo: str = ""
+    check_on_start: bool = True
+    check_interval_hours: int = 6
+    channel: str = "stable"  # stable | test
+    manifest_url: str = ""
+    auto_apply: bool = True
+
+
+@dataclass
 class AppConfig:
     recording: RecordingConfig = field(default_factory=RecordingConfig)
     upload: UploadConfig = field(default_factory=UploadConfig)
@@ -104,6 +117,7 @@ class AppConfig:
     startup: StartupConfig = field(default_factory=StartupConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     google: GoogleConfig = field(default_factory=GoogleConfig)
+    update: UpdateConfig = field(default_factory=UpdateConfig)
     paths: dict[str, str] = field(default_factory=dict)
 
     def resolve_paths(self) -> dict[str, Path]:
@@ -141,6 +155,7 @@ def config_from_dict(data: dict[str, Any]) -> AppConfig:
         startup=_merge_dataclass(StartupConfig, data.get("startup", {})),
         logging=_merge_dataclass(LoggingConfig, data.get("logging", {})),
         google=_merge_dataclass(GoogleConfig, data.get("google", {})),
+        update=_merge_dataclass(UpdateConfig, data.get("update", {})),
         paths=data.get("paths", {}),
     )
 
