@@ -21,7 +21,7 @@ This is not stealth software: startup uses the standard per-user **Run** registr
 | Component | Version |
 |-----------|---------|
 | OS | Windows 10/11 (runtime) |
-| Python | 3.12+ |
+| Python | 3.11+ (3.12+ recommended for builds) |
 | ffmpeg | Auto-installed via winget by `install.ps1` / `install-portable.cmd` if missing |
 | Google Cloud | OAuth Desktop client + Drive API enabled |
 
@@ -80,7 +80,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 .\install.ps1 -GitHubRepo "your-github-user/background-recorder" -InstallPython
 ```
 
-`-InstallPython` uses `winget` when Python 3.12+ is missing. **ffmpeg** is installed automatically the same way (use `-SkipFfmpeg` to opt out).
+`-InstallPython` uses `winget` when Python 3.11+ is missing. **ffmpeg** is installed automatically the same way (use `-SkipFfmpeg` to opt out).
 
 ### Dev install (from a local clone)
 
