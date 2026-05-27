@@ -108,9 +108,10 @@ class DriveClient:
                 msg = str(exc).strip()
                 if "name:" in msg and "version:" in msg and "drive" in msg.lower():
                     raise RuntimeError(
-                        "Google Drive API discovery failed in this build "
-                        "(missing API metadata in frozen exe). Reinstall from a newer "
-                        "bgrec-Windows.zip or run: bgrec login-google after update."
+                        "Google Drive API discovery failed "
+                        "(API metadata unavailable — often after Windows temp cleanup). "
+                        "Run: bgrec doctor — then reinstall from the latest bgrec-Windows.zip "
+                        "if needed."
                     ) from exc
                 raise
             return creds

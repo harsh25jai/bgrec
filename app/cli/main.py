@@ -16,7 +16,11 @@ from app.platform_check import require_windows
 
 require_windows()
 
-from app.runtime_bootstrap import bootstrap_runtime, ssl_certificate_status
+from app.runtime_bootstrap import (
+    bootstrap_runtime,
+    drive_discovery_status,
+    ssl_certificate_status,
+)
 
 bootstrap_runtime()
 
@@ -390,11 +394,9 @@ def _print_update_check(cfg: AppConfig | None = None, result=None) -> None:
 @app.command("doctor")
 def doctor() -> None:
     """Verify bundled runtime prerequisites (discovery docs, TLS). Used after build."""
-    from googleapiclient.discovery_cache import get_static_doc
-
-    doc = get_static_doc("drive", "v3")
-    if not doc:
-        console.print("[red]Drive API discovery document missing in this build[/red]")
+    disc_ok, disc_msg = drive_discovery_status()
+    if not disc_ok:
+        console.print(f"[red]Drive discovery:[/red] {disc_msg}")
         raise typer.Exit(1)
 
     tls_ok, tls_msg = ssl_certificate_status()
@@ -403,6 +405,8 @@ def doctor() -> None:
         raise typer.Exit(1)
 
     console.print("[green]OK[/green] Drive discovery and TLS certificate bundle")
+    console.print(f"[dim]Discovery: {disc_msg}[/dim]")
+    console.print(f"[dim]TLS: {tls_msg}[/dim]")
 
 
 @app.command("login-google")
