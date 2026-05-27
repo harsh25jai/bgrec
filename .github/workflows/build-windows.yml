@@ -1,10 +1,5 @@
-# Production release: bump version in pyproject.toml on main → auto tag → build → GitHub Release + OTA manifest.
-#
-# Release flow:
-#   1. Edit version in pyproject.toml (e.g. 0.0.1 → 0.0.2)
-#   2. Push/merge to main
-#   3. This workflow tags v0.0.2 and publishes bgrec-Windows.zip + latest.json
-#   4. Installed bgrec clients auto-update via OTA
+# pyproject.toml version bump on main → tag v* → build Windows assets → GitHub Release + OTA latest.json
+# Tag/git steps run on ubuntu (bash). Build runs on windows-latest.
 
 name: Release Windows (main)
 
@@ -12,30 +7,35 @@ on:
   push:
     branches:
       - main
+    paths:
+      - pyproject.toml
+      - app/version.py
   workflow_dispatch:
     inputs:
       force_release:
-        description: "Release current pyproject.toml version even if unchanged"
+        description: "Rebuild current pyproject.toml version (even if tag exists)"
         required: false
         default: false
         type: boolean
 
-permissions:
-  contents: write
-
 concurrency:
-  group: release-windows-${{ github.ref }}
+  group: release-windows-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
-  version:
+  tag:
     runs-on: ubuntu-latest
+    if: ${{ !github.event.repository.fork }}
+    permissions:
+      contents: write
     outputs:
-      should_release: ${{ steps.plan.outputs.should_release }}
-      version: ${{ steps.plan.outputs.version }}
-      tag: ${{ steps.plan.outputs.tag }}
+      should_build: ${{ steps.gate.outputs.should_build }}
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+      did_push: ${{ steps.sync.outputs.did_push }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -43,64 +43,143 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Decide release from pyproject.toml version
+      - name: Read pyproject.toml version
+        id: ver
+        run: |
+          set -euo pipefail
+          VERSION="$(python scripts/read_version.py)"
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::Empty version in pyproject.toml"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Using ${TAG} at ${GITHUB_SHA}"
+
+      - name: Decide if this push should release
         id: plan
         env:
           FORCE: ${{ github.event.inputs.force_release }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
-          NEW=$(python scripts/read_version.py)
-          TAG="v${NEW}"
           SHOULD=false
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "$FORCE" = "true" ]; then
-              SHOULD=true
-            else
-              SHOULD=true
-            fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            SHOULD=true
+            echo "Manual workflow_dispatch for ${TAG}"
           else
-            if ! git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" | grep -qx 'pyproject.toml'; then
-              echo "pyproject.toml not changed — skipping release"
-              echo "should_release=false" >> "$GITHUB_OUTPUT"
-              echo "version=$NEW" >> "$GITHUB_OUTPUT"
-              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            BEFORE="$(git show "${{ github.event.before }}:pyproject.toml" 2>/dev/null || true)"
+            OLD="$(echo "$BEFORE" | grep -E '^\s*version\s*=' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+            if [[ -z "$OLD" ]]; then
+              SHOULD=true
+              echo "First release or no parent version — releasing ${TAG}"
+            elif [[ "$OLD" != "$VERSION" ]]; then
+              SHOULD=true
+              echo "Version bump: ${OLD} -> ${VERSION}"
+            else
+              echo "pyproject.toml changed but version still ${VERSION} — skip"
+            fi
+          fi
+
+          if [[ "$FORCE" == "true" ]]; then
+            SHOULD=true
+            echo "force_release enabled"
+          fi
+
+          echo "should_plan=${SHOULD}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure tag at ${{ github.sha }}
+        id: sync
+        if: steps.plan.outputs.should_plan == 'true'
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch origin --tags --force
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            EXISTING="$(git rev-parse "$TAG^{}")"
+            if [[ "$EXISTING" != "$GITHUB_SHA" ]]; then
+              echo "::error::Tag ${TAG} points at ${EXISTING}; this commit is ${GITHUB_SHA}. Bump version in pyproject.toml and push again, or delete remote tag ${TAG} only if it was never published."
+              exit 1
+            fi
+            echo "Remote tag ${TAG} already at this commit — skip tag push."
+            echo "did_push=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "Release ${VERSION}" "${GITHUB_SHA}"
+            git push origin "refs/tags/${TAG}"
+            echo "Pushed new tag ${TAG}."
+            echo "did_push=true" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure GitHub Release exists
+        if: steps.plan.outputs.should_plan == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "GitHub release ${TAG} already exists — will upload/replace assets in build job."
+          else
+            echo "Creating draft GitHub release ${TAG}."
+            gh release create "$TAG" --draft --verify-tag --repo "$REPO" \
+              --title "$TAG" \
+              --generate-notes
+          fi
+
+      - name: Gate Windows build job
+        id: gate
+        env:
+          SHOULD_PLAN: ${{ steps.plan.outputs.should_plan }}
+          FORCE: ${{ github.event.inputs.force_release }}
+          DID_PUSH: ${{ steps.sync.outputs.did_push }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$SHOULD_PLAN" != "true" ]]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$FORCE" == "true" ]]; then
+            echo "force_release — running Windows build."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$DID_PUSH" == "true" ]]; then
+            echo "New tag — running Windows build."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Tag already at this commit (retry after failed build)
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            if gh release view "$TAG" --repo "$REPO" --json assets -q '.assets | length' | grep -qv '^0$'; then
+              echo "Release ${TAG} already has assets — skip build (use workflow_dispatch + force_release to rebuild)."
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            BEFORE=$(git show "${{ github.event.before }}:pyproject.toml" 2>/dev/null || true)
-            OLD=$(echo "$BEFORE" | grep -E '^\s*version\s*=' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
-            if [ -z "$OLD" ]; then
-              SHOULD=true
-            elif [ "$OLD" != "$NEW" ]; then
-              SHOULD=true
-              echo "Version bump: $OLD -> $NEW"
-            else
-              echo "pyproject.toml changed but version unchanged ($NEW) — skipping release"
-            fi
           fi
-
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists"
-            if [ "$SHOULD" = "true" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$FORCE" = "true" ]; then
-              echo "Force release: will rebuild assets for existing tag"
-            elif [ "$SHOULD" = "true" ]; then
-              echo "Tag exists — skip (bump version in pyproject.toml to release again)"
-              SHOULD=false
-            fi
-          fi
-
-          echo "should_release=$SHOULD" >> "$GITHUB_OUTPUT"
-          echo "version=$NEW" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Retry — release missing assets."
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
 
   build-release:
-    needs: version
-    if: needs.version.outputs.should_release == 'true'
+    needs: tag
+    if: ${{ !github.event.repository.fork && needs.tag.outputs.should_build == 'true' }}
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout tag
+        uses: actions/checkout@v4
         with:
+          ref: ${{ needs.tag.outputs.tag }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -108,22 +187,8 @@ jobs:
           python-version: "3.12"
 
       - name: Sync app/version.py from pyproject.toml
+        shell: bash
         run: python scripts/sync_version_from_pyproject.py
-
-      - name: Create and push git tag
-        if: github.event_name == 'push'
-        env:
-          TAG: ${{ needs.version.outputs.tag }}
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already on repo — continuing to build"
-          else
-            git tag -a "$TAG" -m "Release $VERSION"
-            git push origin "$TAG"
-          fi
 
       - name: Install dependencies
         run: |
@@ -145,11 +210,12 @@ jobs:
       - name: Generate OTA manifest
         run: python scripts/generate_update_manifest.py --github-repo ${{ github.repository }}
 
-      - name: Publish GitHub Release
+      - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.version.outputs.tag }}
-          name: ${{ needs.version.outputs.tag }}
+          tag_name: ${{ needs.tag.outputs.tag }}
+          name: ${{ needs.tag.outputs.tag }}
+          draft: false
           files: |
             dist/bgrec-Windows.zip
             dist/bgrec.exe
@@ -160,13 +226,13 @@ jobs:
         shell: pwsh
         run: |
           @"
-          ## Released ${{ needs.version.outputs.tag }}
+          ## Released ${{ needs.tag.outputs.tag }}
 
           | Asset | OTA |
           |-------|-----|
           | ``bgrec-Windows.zip`` | Download + install |
-          | ``latest.json`` | ``bgrec`` auto-update manifest |
+          | ``latest.json`` | Auto-update manifest |
           | ``bgrec.exe`` | Binary only |
 
-          Clients on **${{ needs.version.outputs.version }}** or older will pick this up automatically when ``[update].auto_apply`` is enabled.
+          Clients with ``[update].auto_apply`` will upgrade to **${{ needs.tag.outputs.version }}** on next check.
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
