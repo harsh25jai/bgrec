@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,7 +44,7 @@ class RecordingConfig:
     chunk_duration_seconds: int = 300
     sample_rate: int = 16000
     channels: int = 1
-    output_format: str = "flac"  # flac | mp3
+    output_format: str = "mp3"  # flac | mp3
     mp3_bitrate: str = "64k"
     silence_detection: bool = False
     silence_threshold_db: float = -40.0
@@ -60,7 +61,7 @@ class UploadConfig:
 
 @dataclass
 class EncryptionConfig:
-    enabled: bool = True
+    enabled: bool = False
 
 
 @dataclass
@@ -141,20 +142,81 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
     return asdict(cfg)
 
 
+def _strip_none_values(obj: Any) -> Any:
+    """TOML 1.0 (tomllib) does not support null; omit optional fields instead."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for key, value in obj.items():
+            if value is None:
+                continue
+            cleaned = _strip_none_values(value)
+            if cleaned == {} and not isinstance(value, (str, int, float, bool)):
+                continue
+            out[key] = cleaned
+        return out
+    if isinstance(obj, list):
+        return [_strip_none_values(v) for v in obj if v is not None]
+    return obj
+
+
+def _repair_toml_null_syntax(text: str) -> str:
+    """Remove invalid `= null` assignments (common mistake from JSON-style configs)."""
+    lines: list[str] = []
+    for line in text.splitlines():
+        if re.match(r"^\s*\w+\s*=\s*null\s*($|#)", line, re.IGNORECASE):
+            key = re.match(r"^\s*(\w+)\s*=", line)
+            if key:
+                lines.append(f"# {line.strip()}  # removed: TOML does not support null")
+            continue
+        lines.append(line)
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
+def _read_toml(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as first_exc:
+        repaired = _repair_toml_null_syntax(text)
+        if repaired == text:
+            raise RuntimeError(
+                f"Invalid config file: {path}\n{first_exc}\n\n"
+                "Fix or delete the file. Common issue: `device = null` is not valid TOML."
+            ) from first_exc
+        try:
+            data = tomllib.loads(repaired)
+        except tomllib.TOMLDecodeError as exc:
+            raise RuntimeError(
+                f"Invalid config file: {path}\n{exc}\n\n"
+                "Fix or delete the file. A backup may exist as config.toml.bak."
+            ) from exc
+        backup = path.with_suffix(".toml.bak")
+        backup.write_text(text, encoding="utf-8")
+        path.write_text(repaired, encoding="utf-8")
+        return data
+
+
 def load_config(path: Path | None = None) -> AppConfig:
     config_path = path or default_config_path()
     if not config_path.exists():
         cfg = AppConfig()
         save_config(cfg, config_path)
         return cfg
-    with config_path.open("rb") as f:
-        data = tomllib.load(f)
+    data = _read_toml(config_path)
     return config_from_dict(data)
 
 
 def save_config(cfg: AppConfig, path: Path | None = None) -> Path:
     config_path = path or default_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    with config_path.open("wb") as f:
-        tomli_w.dump(config_to_dict(cfg), f)
+    payload = _strip_none_values(config_to_dict(cfg))
+    tmp_path = config_path.with_suffix(".toml.tmp")
+    try:
+        with tmp_path.open("wb") as f:
+            tomli_w.dump(payload, f)
+        tmp_path.replace(config_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
     return config_path

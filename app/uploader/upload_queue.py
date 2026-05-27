@@ -85,14 +85,15 @@ class UploadQueue:
     def process_pending(self, blocking: bool = False) -> int:
         if not self.config.upload.enabled:
             return 0
-        if not self.drive.is_configured():
-            log.warning("Google credentials not configured; skipping uploads")
+        auth_key, auth_msg = self.drive.google_auth_status()
+        if auth_key != "authenticated":
+            log.warning("Google upload skipped: {}", auth_msg)
             return 0
 
         try:
             self.drive.authenticate(interactive=False)
         except Exception as exc:
-            log.warning("Drive auth failed: {}", exc)
+            log.warning("Drive auth failed: {} — files stay in pending queue", exc)
             return 0
 
         pending = list(self.state.pending_uploads)

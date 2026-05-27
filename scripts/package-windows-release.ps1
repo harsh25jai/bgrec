@@ -22,6 +22,8 @@ Copy-Item (Join-Path $Root "scripts\windows-ensure-ffmpeg.ps1") $ReleaseDir
 Copy-Item (Join-Path $Root "uninstall.ps1") $ReleaseDir
 Copy-Item (Join-Path $Root "config\config.toml.example") $ReleaseDir
 Copy-Item (Join-Path $Root "README.md") $ReleaseDir
+Copy-Item (Join-Path $Root "scripts\decrypt_recording.py") $ReleaseDir
+Copy-Item (Join-Path $Root "decrypt-recording.cmd") $ReleaseDir
 
 @"
 Background Audio Recorder — portable install

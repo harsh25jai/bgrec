@@ -30,6 +30,8 @@ copy /y "%ROOT%\scripts\windows-ensure-ffmpeg.ps1" "%RELEASE_DIR%\" >nul
 copy /y "%ROOT%\uninstall.ps1" "%RELEASE_DIR%\" >nul
 copy /y "%ROOT%\config\config.toml.example" "%RELEASE_DIR%\" >nul
 copy /y "%ROOT%\README.md" "%RELEASE_DIR%\" >nul
+copy /y "%ROOT%\scripts\decrypt_recording.py" "%RELEASE_DIR%\" >nul
+copy /y "%ROOT%\decrypt-recording.cmd" "%RELEASE_DIR%\" >nul
 
 (
 echo Background Audio Recorder — portable install
