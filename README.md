@@ -7,8 +7,8 @@ This is not stealth software: startup uses the standard per-user **Run** registr
 ## Features
 
 - Continuous microphone recording in **5-minute chunks** (configurable)
-- **FLAC** or **MP3** output (via pydub + ffmpeg)
-- **AES-256-GCM** encryption before upload
+- **MP3** output by default (FLAC optional; via pydub + ffmpeg)
+- Optional **AES-256-GCM** encryption before upload (off by default)
 - **Google Drive** upload with OAuth desktop flow
 - Retry / resume pending uploads after reboot
 - **HKCU Run** startup integration (optional)
@@ -230,7 +230,22 @@ bgrec start --background
 ## Security notes
 
 - Encryption key: `%LOCALAPPDATA%\BackgroundAudioRecorder\encryption.key` (user-only ACL best effort).
-- When `encryption.enabled = true`, only `.enc` files are queued for upload.
+- When `encryption.enabled = true`, **local** copies stay as `.enc` under `recordings\encrypted\`; **Google Drive** gets normal `.mp3` / `.flac` (decrypted at upload time). Default is encryption off.
+
+### Hearing your recordings
+
+| Where | Encryption off | Encryption on |
+|-------|----------------|---------------|
+| **This PC** | Plain `.mp3` in `recordings\` | `.enc` in `recordings\encrypted\` (use `bgrec decrypt` to play) |
+| **Google Drive** | Plain `.mp3` | Plain `.mp3` (play in browser or any app) |
+
+Decrypt a **local** encrypted file:
+
+```cmd
+bgrec decrypt "%LOCALAPPDATA%\BackgroundAudioRecorder\recordings\encrypted\rec_20250101_120000.mp3.enc"
+```
+
+Key file: `%LOCALAPPDATA%\BackgroundAudioRecorder\encryption.key` (needed for local `.enc` only; Drive files are not encrypted).
 - No privilege escalation, no hidden persistence — startup is a normal user Run key.
 - Validate paths stay under configured data directories.
 
@@ -248,6 +263,9 @@ bgrec start --background
 | FLAC/MP3 fails / pydub ffmpeg warning | Re-run `install-portable.cmd` or `install.ps1` (auto-installs ffmpeg). Manual: `winget install -e Gyan.FFmpeg`, then open a new terminal. Without ffmpeg, recordings stay WAV. |
 | Upload fails | Run `bgrec login-google`; check `logs\upload.log` |
 | `No module named typer` / `main.py` in traceback | Wrong launcher on PATH. Run `where bgrec` — use `%LOCALAPPDATA%\BackgroundAudioRecorder\bin\bgrec.exe`. Remove legacy `%LOCALAPPDATA%\BackgroundAudioRecorder\bgrec.cmd` and re-run `install-portable.cmd`, or rebuild the exe after updating PyInstaller settings. |
+| `TOMLDecodeError` at `device = null` (line 7) | Not Google OAuth — invalid TOML. Delete `device = null` from `%LOCALAPPDATA%\BackgroundAudioRecorder\config.toml` or delete the file and run `bgrec status` to recreate. Newer builds auto-repair this. |
+| `NoneType` is not TOML serializable / empty `config.toml` | Old build tried to save `device = null`. Delete `%LOCALAPPDATA%\BackgroundAudioRecorder\config.toml` and run `bgrec status`, or restore `config.toml.bak`. Rebuild `bgrec.exe` from latest source. |
+| Google not signed in | Recording still works; files go to `recordings\` and `cache\pending\`. Run `bgrec login-google` when ready. `bgrec status` shows Google auth state. |
 | Device disconnect | Recorder auto-retries every few seconds |
 
 ## License

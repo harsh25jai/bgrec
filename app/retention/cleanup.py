@@ -22,7 +22,14 @@ class RetentionManager:
         if days <= 0:
             return 0
         cutoff = time.time() - days * 86400
-        for directory in (self.paths["recordings"], self.paths["pending_uploads"], self.paths["cache"]):
+        dirs = [
+            self.paths["recordings"],
+            self.paths["recordings"] / "encrypted",
+            self.paths["pending_uploads"],
+            self.paths["cache"] / "upload_temp",
+            self.paths["cache"],
+        ]
+        for directory in dirs:
             if not directory.exists():
                 continue
             for f in directory.rglob("*"):

@@ -3,12 +3,12 @@
 # Or run `bgrec config` after first launch (auto-created).
 
 [recording]
-# Microphone: null = default, or device index/name from `bgrec list-devices`
-device = null
+# Microphone: omit `device` for system default, or set index/name from `bgrec list-devices`
+# device = "0"
 chunk_duration_seconds = 300
 sample_rate = 16000
 channels = 1
-output_format = "flac"   # flac | mp3
+output_format = "mp3"    # flac | mp3
 mp3_bitrate = "64k"
 silence_detection = false
 silence_threshold_db = -40.0
@@ -20,8 +20,9 @@ retry_max_attempts = 5
 retry_delay_seconds = 30
 upload_workers = 2
 
+# When enabled: keep .enc under recordings/encrypted locally; upload plain .mp3/.flac to Drive
 [encryption]
-enabled = true
+enabled = false
 
 [retention]
 local_retention_days = 7

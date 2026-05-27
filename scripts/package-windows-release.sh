@@ -28,6 +28,8 @@ cp "$ROOT/scripts/windows-ensure-ffmpeg.ps1" "$RELEASE_DIR/"
 cp "$ROOT/uninstall.ps1" "$RELEASE_DIR/"
 cp "$ROOT/config/config.toml.example" "$RELEASE_DIR/"
 cp "$ROOT/README.md" "$RELEASE_DIR/"
+cp "$ROOT/scripts/decrypt_recording.py" "$RELEASE_DIR/"
+cp "$ROOT/decrypt-recording.cmd" "$RELEASE_DIR/"
 
 cat > "$RELEASE_DIR/INSTALL.txt" <<'EOF'
 Background Audio Recorder — portable install

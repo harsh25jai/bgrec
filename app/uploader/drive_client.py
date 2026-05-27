@@ -36,6 +36,37 @@ class DriveClient:
     def is_configured(self) -> bool:
         return self.credentials_path.exists()
 
+    def google_auth_status(self) -> tuple[str, str]:
+        """
+        Return (status_key, human_message) for CLI status.
+        Keys: not_configured | not_authenticated | authenticated
+        """
+        if not self.is_configured():
+            return (
+                "not_configured",
+                "Not set up — add credentials.json and run: bgrec login-google",
+            )
+        if not self.token_path.exists():
+            return (
+                "not_authenticated",
+                "Not signed in — run: bgrec login-google (recording still works locally)",
+            )
+        try:
+            creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+        except Exception:
+            return (
+                "not_authenticated",
+                "Invalid token — run: bgrec login-google",
+            )
+        if creds and creds.valid:
+            return ("authenticated", "Signed in to Google Drive")
+        if creds and creds.expired and creds.refresh_token:
+            return ("authenticated", "Signed in (token refreshable)")
+        return (
+            "not_authenticated",
+            "Not signed in — run: bgrec login-google (recording still works locally)",
+        )
+
     def authenticate(self, interactive: bool = True) -> Credentials:
         creds: Credentials | None = None
         if self.token_path.exists():

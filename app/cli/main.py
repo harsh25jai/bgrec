@@ -21,6 +21,7 @@ from app.config.settings import (
     load_config,
     save_config,
 )
+from app.crypto.encryption import EncryptionManager
 from app.logging.setup import configure_logging, get_logger
 from app.recorder.audio_recorder import list_input_devices
 from app.scheduler.coordinator import ServiceCoordinator
@@ -84,6 +85,14 @@ def status() -> None:
     paths = cfg.ensure_directories()
     state = DaemonState.load(paths["root"] / "state.json")
 
+    drive = DriveClient(
+        paths["credentials"],
+        credentials_file=cfg.google.credentials_file,
+        token_file=cfg.google.token_file,
+        app_folder_name=cfg.google.app_folder_name,
+    )
+    auth_key, auth_msg = drive.google_auth_status()
+
     table = Table(title="Background Audio Recorder")
     table.add_column("Field", style="cyan")
     table.add_column("Value")
@@ -95,8 +104,13 @@ def status() -> None:
     table.add_row("Pending uploads", str(len(state.pending_uploads)))
     table.add_row("Config", str(default_config_path()))
     table.add_row("Recordings", str(paths["recordings"]))
+    table.add_row("Upload queue (cache)", str(paths["pending_uploads"]))
     table.add_row("Encryption", "enabled" if cfg.encryption.enabled else "disabled")
     table.add_row("Upload", "enabled" if cfg.upload.enabled else "disabled")
+    if auth_key == "authenticated":
+        table.add_row("Google auth", f"[green]{auth_msg}[/green]")
+    else:
+        table.add_row("Google auth", f"[yellow]{auth_msg}[/yellow]")
     table.add_row("Startup registry", str(WindowsStartupManager().is_enabled()))
 
     console.print(table)
@@ -160,15 +174,27 @@ def list_recordings(
     """List local recording files."""
     cfg = _load()
     paths = cfg.ensure_directories()
-    files = sorted(paths["recordings"].glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
     table = Table(title="Local Recordings")
     table.add_column("Name")
     table.add_column("Size (KB)")
     table.add_column("Modified")
-    for f in files[:limit]:
-        if f.is_file():
-            stat = f.stat()
-            table.add_row(f.name, f"{stat.st_size / 1024:.1f}", str(stat.st_mtime))
+    table.add_column("Location")
+    shown = 0
+    sources = [paths["recordings"], paths["recordings"] / "encrypted"]
+    all_files: list[tuple[Path, str]] = []
+    for base in sources:
+        if not base.exists():
+            continue
+        label = "encrypted" if base.name == "encrypted" else "plain"
+        for f in base.iterdir():
+            if f.is_file():
+                all_files.append((f, label))
+    for f, label in sorted(all_files, key=lambda x: x[0].stat().st_mtime, reverse=True)[:limit]:
+        stat = f.stat()
+        table.add_row(f.name, f"{stat.st_size / 1024:.1f}", str(stat.st_mtime), label)
+        shown += 1
+    if shown == 0:
+        console.print("[dim]No local recording files yet.[/dim]")
     console.print(table)
 
 
@@ -187,6 +213,38 @@ def delete_local_cache(
     console.print(f"[green]Removed {n} cached file(s)[/green]")
 
 
+@app.command("decrypt")
+def decrypt(
+    encrypted: Path = typer.Argument(..., help="Path to a .enc file (local or downloaded from Drive)."),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Output audio path (default: strip .enc → e.g. rec_20250101.flac)"
+    ),
+) -> None:
+    """Decrypt a recording using your local encryption.key (then play with any media player)."""
+    cfg = _load()
+    paths = cfg.ensure_directories()
+    enc_path = encrypted.expanduser().resolve()
+    if not enc_path.is_file():
+        console.print(f"[red]File not found:[/red] {enc_path}")
+        raise typer.Exit(1)
+    if enc_path.suffix != ".enc":
+        console.print("[yellow]Warning: file does not end with .enc[/yellow]")
+
+    out_path = output or enc_path.with_suffix("")
+    key_path = paths["root"] / "encryption.key"
+    if not key_path.exists():
+        console.print(
+            f"[red]Missing encryption key:[/red] {key_path}\n"
+            "You need the same PC/key that encrypted this file."
+        )
+        raise typer.Exit(1)
+
+    mgr = EncryptionManager(key_path, enabled=True)
+    mgr.decrypt_file(enc_path, out_path)
+    console.print(f"[green]Decrypted to:[/green] {out_path}")
+    console.print("Open that file in VLC, Windows Media Player, etc.")
+
+
 @app.command("list-devices")
 def list_devices() -> None:
     """List available microphone input devices."""
@@ -199,7 +257,11 @@ def install_startup() -> None:
     """Add application to Windows startup (HKCU Run — visible to user)."""
     cfg = _load()
     cfg.startup.enabled = True
-    save_config(cfg)
+    try:
+        save_config(cfg)
+    except Exception as exc:
+        console.print(f"[red]Could not save config (startup not changed):[/red] {exc}")
+        raise typer.Exit(1) from exc
     WindowsStartupManager().enable()
     console.print("[green]Startup entry added to HKCU Run registry[/green]")
 
@@ -209,7 +271,11 @@ def uninstall_startup() -> None:
     """Remove application from Windows startup."""
     cfg = _load()
     cfg.startup.enabled = False
-    save_config(cfg)
+    try:
+        save_config(cfg)
+    except Exception as exc:
+        console.print(f"[red]Could not save config:[/red] {exc}")
+        raise typer.Exit(1) from exc
     WindowsStartupManager().disable()
     console.print("[green]Startup entry removed[/green]")
 
