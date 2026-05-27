@@ -29,7 +29,7 @@ function Get-AppVersion {
 }
 
 if (-not (Test-Path $Exe)) {
-    throw "Missing $Exe — run: python scripts\build_exe.py"
+    throw "Missing $Exe - run: python scripts\build_exe.py"
 }
 
 if (Test-Path $ReleaseDir) { Remove-Item -Recurse -Force $ReleaseDir }

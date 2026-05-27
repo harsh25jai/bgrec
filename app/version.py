@@ -1,14 +1,16 @@
-"""Application version (keep in sync with pyproject.toml — use MAJOR.MINOR.PATCH e.g. 0.0.1)."""
+"""Application version (single source: pyproject.toml [project].version)."""
 
 from __future__ import annotations
 
 import re
+import sys
 from functools import lru_cache
 from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
 
-__version__ = "0.0.1"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_VERSION_PATTERN = re.compile(r'^\s*version\s*=\s*"([^"]+)"', re.MULTILINE)
 
 
 def normalize_version(raw: str) -> str:
@@ -29,27 +31,41 @@ def normalize_version(raw: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 
+def _pyproject_candidates() -> list[Path]:
+    paths: list[Path] = []
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        paths.append(Path(sys._MEIPASS) / "pyproject.toml")
+    paths.append(_REPO_ROOT / "pyproject.toml")
+    return paths
+
+
+@lru_cache(maxsize=1)
+def read_version_from_pyproject() -> str:
+    """Read and normalize [project].version from pyproject.toml."""
+    for path in _pyproject_candidates():
+        if not path.is_file():
+            continue
+        match = _VERSION_PATTERN.search(path.read_text(encoding="utf-8"))
+        if match:
+            return normalize_version(match.group(1))
+    raise RuntimeError(
+        "Could not read version from pyproject.toml "
+        f"(checked: {', '.join(str(p) for p in _pyproject_candidates())})"
+    )
+
+
 @lru_cache(maxsize=1)
 def get_version() -> str:
     """Installed package version (always MAJOR.MINOR.PATCH)."""
-    raw: str | None = None
     try:
         from importlib.metadata import version as pkg_version
 
-        raw = pkg_version("bgrec")
+        return normalize_version(pkg_version("bgrec"))
     except Exception:
-        pass
+        return read_version_from_pyproject()
 
-    if not raw:
-        root = Path(__file__).resolve().parents[1]
-        pyproject = root / "pyproject.toml"
-        if pyproject.exists():
-            match = re.search(
-                r'^\s*version\s*=\s*"([^"]+)"', pyproject.read_text(encoding="utf-8"), re.M
-            )
-            if match:
-                raw = match.group(1)
 
-    if not raw:
-        raw = __version__
-    return normalize_version(raw)
+def __getattr__(name: str) -> str:
+    if name == "__version__":
+        return get_version()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

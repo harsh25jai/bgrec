@@ -20,7 +20,8 @@ from app.updater.manifest import (
     is_update_available,
     supports_upgrade,
 )
-from app.version import get_version, normalize_version
+from app.install.portable import get_installed_version_for_ota
+from app.version import normalize_version
 
 log = get_logger("updater")
 
@@ -67,7 +68,7 @@ def resolve_manifest_url(cfg: AppConfig) -> str:
 
 def check_for_updates(cfg: AppConfig | None = None) -> UpdateCheckResult:
     cfg = ensure_update_repo(cfg or load_config())
-    current = get_version()
+    current = get_installed_version_for_ota()
     root = default_data_dirs()["root"]
     meta = load_config_meta(root)
     last_applied = read_current_meta().get("version") or meta.get("merged_from_version")
