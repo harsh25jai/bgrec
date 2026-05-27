@@ -206,7 +206,7 @@ bgrec update --check-only
 
 Release process (main branch):
 
-1. Bump `version` in `pyproject.toml` (e.g. `0.0.1` → `0.0.2`). CI syncs `app/version.py`.
+1. Bump `version` in `pyproject.toml` only (e.g. `0.0.1` → `0.0.2`). Runtime and frozen builds read it from there.
 2. Commit and **push/merge to `main`**.
 3. GitHub Actions creates tag **`v0.0.2`**, builds, and publishes Release + `latest.json`.
 4. Installed `bgrec` clients auto-update (no manual tag or `gh release` steps).

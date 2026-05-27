@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from app.config.settings import default_data_dirs
-from app.version import normalize_version
+from app.version import get_version, normalize_version
 
 
 def bin_exe_path() -> Path:
@@ -75,6 +75,18 @@ def get_portable_bin_version() -> str | None:
         except ValueError:
             pass
     return None
+
+
+def get_installed_version_for_ota() -> str:
+    """
+    Version to compare against the remote manifest.
+    Uses the portable bin when installed (not the Downloads copy path).
+    """
+    if portable_install_exists():
+        bin_ver = get_portable_bin_version()
+        if bin_ver:
+            return bin_ver
+    return get_version()
 
 
 def wrong_executable_hint() -> str | None:

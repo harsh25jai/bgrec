@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print project version from pyproject.toml (MAJOR.MINOR.PATCH)."""
+"""Print project version from pyproject.toml (MAJOR.MINOR.PATCH). No package deps (CI tag job)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def read_pyproject_version() -> str:
+def read_pyproject_version_raw() -> str:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.MULTILINE)
     if not match:
@@ -19,4 +19,4 @@ def read_pyproject_version() -> str:
 
 
 if __name__ == "__main__":
-    sys.stdout.write(read_pyproject_version())
+    sys.stdout.write(read_pyproject_version_raw())

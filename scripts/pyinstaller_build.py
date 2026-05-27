@@ -55,6 +55,7 @@ HIDDEN_IMPORTS = [
     "app.updater.bundled",
     "app.updater.scheduler",
     "app.runtime_bootstrap",
+    "app.install.portable",
     "certifi",
 ]
 
@@ -112,6 +113,9 @@ def pyinstaller_command() -> list[str]:
     for pkg in COLLECT_ALL:
         cmd.append(f"--collect-all={pkg}")
     sep = os.pathsep
+    pyproject = ROOT / "pyproject.toml"
+    if pyproject.exists():
+        cmd.append(f"--add-data={pyproject}{sep}.")
     for name in ("config.toml.example", "schema-version.txt", "github-repo.txt"):
         src = ROOT / "config" / name
         if src.exists():
