@@ -1,6 +1,9 @@
 @echo off
 REM Portable installer for pre-built bgrec.exe (double-click or run from cmd).
 REM Delegates to install-portable.ps1 with execution policy bypass.
+REM
+REM   install-portable.cmd
+REM   install-portable.cmd -SkipFfmpeg
 
 setlocal EnableExtensions
 cd /d "%~dp0"

@@ -26,6 +26,7 @@ mkdir "%RELEASE_DIR%"
 copy /y "%EXE%" "%RELEASE_DIR%\" >nul
 copy /y "%ROOT%\install-portable.ps1" "%RELEASE_DIR%\" >nul
 copy /y "%ROOT%\install-portable.cmd" "%RELEASE_DIR%\" >nul
+copy /y "%ROOT%\scripts\windows-ensure-ffmpeg.ps1" "%RELEASE_DIR%\" >nul
 copy /y "%ROOT%\uninstall.ps1" "%RELEASE_DIR%\" >nul
 copy /y "%ROOT%\config\config.toml.example" "%RELEASE_DIR%\" >nul
 copy /y "%ROOT%\README.md" "%RELEASE_DIR%\" >nul
@@ -50,7 +51,7 @@ echo.
 echo    bgrec login-google
 echo    bgrec start --background
 echo.
-echo Requires ffmpeg on PATH for FLAC/MP3: winget install Gyan.FFmpeg
+echo ffmpeg is installed automatically by install-portable.cmd if missing.
 ) > "%RELEASE_DIR%\INSTALL.txt"
 
 if exist "%ZIP%" del /f /q "%ZIP%"

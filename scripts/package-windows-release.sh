@@ -24,6 +24,7 @@ mkdir -p "$RELEASE_DIR"
 cp "$EXE" "$RELEASE_DIR/"
 cp "$ROOT/install-portable.ps1" "$RELEASE_DIR/"
 cp "$ROOT/install-portable.cmd" "$RELEASE_DIR/"
+cp "$ROOT/scripts/windows-ensure-ffmpeg.ps1" "$RELEASE_DIR/"
 cp "$ROOT/uninstall.ps1" "$RELEASE_DIR/"
 cp "$ROOT/config/config.toml.example" "$RELEASE_DIR/"
 cp "$ROOT/README.md" "$RELEASE_DIR/"
@@ -47,7 +48,7 @@ Background Audio Recorder — portable install
    bgrec login-google
    bgrec start --background
 
-Requires ffmpeg on PATH for FLAC/MP3: winget install Gyan.FFmpeg
+ffmpeg is installed automatically by install-portable.cmd (via winget) if missing.
 EOF
 
 rm -f "$ZIP"

@@ -14,7 +14,9 @@
   .\install.ps1
 
 .EXAMPLE
-  .\install.ps1 -GitHubRepo "yourname/background-recorder" -InstallPython -InstallFfmpeg
+  .\install.ps1 -GitHubRepo "yourname/background-recorder" -InstallPython
+
+  ffmpeg is installed automatically via winget when missing (use -SkipFfmpeg to opt out).
 #>
 
 param(
@@ -22,11 +24,37 @@ param(
     [string]$Branch = "main",
     [string]$ZipUrl = "",
     [switch]$InstallPython,
-    [switch]$InstallFfmpeg,
+    [switch]$SkipFfmpeg,
     [switch]$SkipStartupPrompt
 )
 
 $ErrorActionPreference = "Stop"
+
+function Import-FfmpegHelper {
+    $local = Join-Path $PSScriptRoot "scripts\windows-ensure-ffmpeg.ps1"
+    if (Test-Path $local) {
+        . $local
+        return
+    }
+    if ($GitHubRepo -eq "YOUR_GITHUB_USER/background-recorder" -and -not $ZipUrl) {
+        throw @"
+Cannot load ffmpeg installer helper.
+Run from a full repo clone, or set -GitHubRepo so install.ps1 can download:
+  scripts\windows-ensure-ffmpeg.ps1
+"@
+    }
+    $url = if ($ZipUrl) {
+        throw "Standalone install.ps1 with -ZipUrl requires scripts\windows-ensure-ffmpeg.ps1 beside install.ps1."
+    } else {
+        "https://raw.githubusercontent.com/$GitHubRepo/$Branch/scripts/windows-ensure-ffmpeg.ps1"
+    }
+    $dest = Join-Path $env:TEMP "bgrec-windows-ensure-ffmpeg.ps1"
+    Write-Host "Downloading ffmpeg helper..." -ForegroundColor DarkGray
+    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+    . $dest
+}
+
+Import-FfmpegHelper
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $InstallDir = Join-Path $env:LOCALAPPDATA "BackgroundAudioRecorder"
@@ -66,22 +94,6 @@ Python 3.12+ not found.
 Option A — install manually: https://www.python.org/downloads/ (check 'Add to PATH')
 Option B — re-run with:  .\install.ps1 -InstallPython
 "@
-}
-
-function Ensure-Ffmpeg {
-    if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
-        Write-Host "ffmpeg OK." -ForegroundColor Green
-        return
-    }
-    Write-Host "WARNING: ffmpeg not on PATH (needed for FLAC/MP3)." -ForegroundColor Yellow
-    if ($InstallFfmpeg) {
-        Write-Step "Installing ffmpeg via winget..."
-        winget install -e --id Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                    [System.Environment]::GetEnvironmentVariable("Path", "User")
-    } else {
-        Write-Host "  Re-run with -InstallFfmpeg  or:  winget install Gyan.FFmpeg" -ForegroundColor Yellow
-    }
 }
 
 function Get-ProjectRoot {
@@ -183,7 +195,8 @@ Write-Host @"
 "@ -ForegroundColor Cyan
 
 Ensure-Python
-Ensure-Ffmpeg
+Write-Step "Checking ffmpeg"
+Ensure-Ffmpeg -SkipInstall:$SkipFfmpeg
 
 $projectRoot = Get-ProjectRoot
 if (-not $projectRoot) {

@@ -22,7 +22,7 @@ This is not stealth software: startup uses the standard per-user **Run** registr
 |-----------|---------|
 | OS | Windows 10/11 (runtime) |
 | Python | 3.12+ |
-| ffmpeg | On PATH (for FLAC/MP3) |
+| ffmpeg | Auto-installed via winget by `install.ps1` / `install-portable.cmd` if missing |
 | Google Cloud | OAuth Desktop client + Drive API enabled |
 
 **macOS/Linux:** You can install deps for code editing only (`pip install -r requirements.txt`). The app will not record audio off Windows. Use `requirements-windows.txt` on the target PC (includes PyInstaller).
@@ -64,6 +64,7 @@ Replace `YOUR_USER/background-recorder` with your repo. The script will:
 1. Download the app from GitHub  
 2. Install Python packages into `%LOCALAPPDATA%\BackgroundAudioRecorder\`  
 3. Add `bgrec` to your user PATH  
+4. Install **ffmpeg** via winget if it is not already on PATH  
 
 **First-time setup on Mac** (print your personalized one-liner):
 
@@ -76,10 +77,10 @@ chmod +x scripts/print-install-oneliner.sh
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
-.\install.ps1 -GitHubRepo "your-github-user/background-recorder" -InstallPython -InstallFfmpeg
+.\install.ps1 -GitHubRepo "your-github-user/background-recorder" -InstallPython
 ```
 
-`-InstallPython` / `-InstallFfmpeg` use `winget` if those tools are missing.
+`-InstallPython` uses `winget` when Python 3.12+ is missing. **ffmpeg** is installed automatically the same way (use `-SkipFfmpeg` to opt out).
 
 ### Dev install (from a local clone)
 
@@ -207,6 +208,8 @@ REM After unzipping the release folder:
 install-portable.cmd
 ```
 
+(`ffmpeg` is installed automatically via winget if missing.)
+
 Or PowerShell:
 
 ```powershell
@@ -236,7 +239,7 @@ bgrec start --background
 | Issue | Fix |
 |-------|-----|
 | No audio | Check mic privacy: Settings → Privacy → Microphone |
-| FLAC/MP3 fails | Install ffmpeg: `winget install Gyan.FFmpeg` |
+| FLAC/MP3 fails / pydub ffmpeg warning | Re-run `install-portable.cmd` or `install.ps1` (auto-installs ffmpeg). Manual: `winget install -e Gyan.FFmpeg`, then open a new terminal. Without ffmpeg, recordings stay WAV. |
 | Upload fails | Run `bgrec login-google`; check `logs\upload.log` |
 | Device disconnect | Recorder auto-retries every few seconds |
 

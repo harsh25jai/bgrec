@@ -5,8 +5,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from pydub import AudioSegment
-
 from app.logging.setup import get_logger
 
 log = get_logger("converter")
@@ -24,6 +22,9 @@ def wav_to_compressed(
     if not ffmpeg_available():
         log.warning("ffmpeg not found on PATH; keeping WAV")
         return wav_path
+
+    # Lazy import: pydub prints a RuntimeWarning on import if ffmpeg is missing.
+    from pydub import AudioSegment
 
     audio = AudioSegment.from_wav(str(wav_path))
     fmt = output_format.lower()
