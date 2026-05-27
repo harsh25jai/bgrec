@@ -433,8 +433,9 @@ def config_cmd(
     if key and value is not None:
         _set_nested(cfg, key, _parse_value(value))
         path = save_config(cfg)
-        if cfg.startup.enabled:
-            WindowsStartupManager().enable()
+        # Only touch the Run key when startup settings change (not for unrelated keys like update.github_repo).
+        if key == "startup.enabled" or key.startswith("startup."):
+            WindowsStartupManager().sync(cfg.startup.enabled)
         console.print(f"[green]Updated {key} -> saved to {path}[/green]")
         return
     if show:
