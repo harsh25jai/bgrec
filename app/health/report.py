@@ -62,7 +62,9 @@ def assess_health(
         )
 
     if cfg.upload.enabled:
-        if auth_key != "authenticated":
+        if auth_key == "authenticated":
+            issues.pop("google_auth", None)
+        else:
             _merge_issue(issues, "google_auth", auth_msg)
 
         tls_ok, tls_msg = ssl_certificate_status()

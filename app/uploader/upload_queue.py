@@ -13,6 +13,7 @@ from app.crypto.encryption import EncryptionManager
 from app.logging.setup import get_logger
 from app.service.state import DaemonState, PendingUpload
 from app.uploader.drive_client import DriveClient
+from app.utils.file_busy import is_file_in_use
 from app.utils.paths import safe_resolve
 
 log = get_logger("upload_queue")
@@ -72,7 +73,12 @@ class UploadQueue:
             return enc_path
 
         dest = self.pending_dir / source.name
-        shutil.copy2(source, dest)
+        try:
+            shutil.copy2(source, dest)
+        except OSError as exc:
+            if is_file_in_use(exc):
+                raise RuntimeError(f"File is in use, will retry later: {source.name}") from exc
+            raise
         if self.config.retention.delete_after_upload:
             source.unlink(missing_ok=True)
         self.state.add_pending(dest, dest.name)
@@ -147,6 +153,10 @@ class UploadQueue:
         lower = message.lower()
         if "tls" in lower or "certificate" in lower or "ssl" in lower:
             return "tls"
+        if ("not signed in" in lower or "login-google" in lower) and "discovery" not in lower:
+            return "google_auth"
+        if "discovery" in lower or "api metadata" in lower:
+            return "upload"
         return "upload"
 
     def _process_pending_unlocked(self, blocking: bool = False) -> int:
@@ -283,6 +293,9 @@ class UploadQueue:
                             break
                 log.info("Re-queued recording for upload: {}", f.name)
             except Exception as exc:
+                if is_file_in_use(exc):
+                    log.debug("Skipping re-queue (file in use): {}", f.name)
+                    continue
                 log.warning("Could not re-queue {}: {}", f.name, exc)
         return recovered
 
@@ -297,6 +310,12 @@ class UploadQueue:
                 continue
             enc_path = enc_dir / f"{f.name}.enc"
             if enc_path.exists():
-                f.unlink(missing_ok=True)
+                try:
+                    f.unlink(missing_ok=True)
+                except OSError as exc:
+                    if is_file_in_use(exc):
+                        log.debug("Plaintext in use, keeping until next pass: {}", f.name)
+                        continue
+                    raise
                 log.debug("Removed stale plaintext (encrypted copy kept): {}", f.name)
         return []

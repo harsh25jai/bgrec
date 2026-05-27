@@ -16,7 +16,7 @@ from app.platform_check import require_windows
 
 require_windows()
 
-from app.runtime_bootstrap import bootstrap_runtime
+from app.runtime_bootstrap import bootstrap_runtime, ssl_certificate_status
 
 bootstrap_runtime()
 
@@ -50,6 +50,10 @@ from app.config.migrate import load_config_meta
 from app.updater.apply import apply_update, is_ota_target_install, read_current_meta, rollback_exe
 from app.updater.service import check_for_updates, ensure_update_repo, try_auto_apply
 from app.health.report import assess_health, format_issues_for_status
+from app.health.state_issues import (
+    ISSUES_CLEARED_AFTER_GOOGLE_LOGIN,
+    clear_persisted_health_issues,
+)
 from app.install.portable import (
     bin_exe_path,
     get_portable_bin_version,
@@ -383,6 +387,24 @@ def _print_update_check(cfg: AppConfig | None = None, result=None) -> None:
         console.print(f"[dim]Manifest: {result.manifest_url}[/dim]")
 
 
+@app.command("doctor")
+def doctor() -> None:
+    """Verify bundled runtime prerequisites (discovery docs, TLS). Used after build."""
+    from googleapiclient.discovery_cache import get_static_doc
+
+    doc = get_static_doc("drive", "v3")
+    if not doc:
+        console.print("[red]Drive API discovery document missing in this build[/red]")
+        raise typer.Exit(1)
+
+    tls_ok, tls_msg = ssl_certificate_status()
+    if not tls_ok:
+        console.print(f"[red]TLS:[/red] {tls_msg}")
+        raise typer.Exit(1)
+
+    console.print("[green]OK[/green] Drive discovery and TLS certificate bundle")
+
+
 @app.command("login-google")
 def login_google() -> None:
     """Run Google OAuth desktop flow and save token."""
@@ -403,6 +425,8 @@ def login_google() -> None:
         raise typer.Exit(1)
     drive.authenticate(interactive=True)
     drive.ensure_app_folder()
+    if clear_persisted_health_issues(*ISSUES_CLEARED_AFTER_GOOGLE_LOGIN):
+        console.print("[dim]Cleared stale health issues from daemon state[/dim]")
     console.print("[green]Google Drive authenticated successfully[/green]")
 
 
