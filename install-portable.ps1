@@ -52,14 +52,26 @@ if ((Test-Path $exampleConfig) -and -not (Test-Path $configPath)) {
     Copy-Item $exampleConfig $configPath
 }
 
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath -notlike "*$BinDir*") {
-    $newPath = if ($userPath) { "$userPath;$BinDir" } else { $BinDir }
-    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    Refresh-SessionPath
-    Write-Host "Added to user PATH: $BinDir" -ForegroundColor Green
-    Write-Host "Open a new terminal for 'bgrec' to be recognized." -ForegroundColor Yellow
+# Legacy install.ps1 drops bgrec.cmd in $InstallDir; that wins over bin\bgrec.exe on PATH.
+$legacyCmd = Join-Path $InstallDir "bgrec.cmd"
+if (Test-Path $legacyCmd) {
+    Remove-Item $legacyCmd -Force
+    Write-Host "Removed legacy bgrec.cmd (script launcher)" -ForegroundColor Yellow
 }
+
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$pathParts = @()
+if ($userPath) {
+    $pathParts = $userPath -split ";" | Where-Object { $_ -and ($_ -ne $InstallDir) }
+}
+if ($pathParts -notcontains $BinDir) {
+    $pathParts = @($BinDir) + @($pathParts)
+}
+$newPath = ($pathParts -join ";").Trim(";")
+[Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+Refresh-SessionPath
+Write-Host "PATH: $BinDir is first for bgrec.exe" -ForegroundColor Green
+Write-Host "Open a new terminal for 'bgrec' to be recognized." -ForegroundColor Yellow
 
 Write-Host ""
 Write-Host "Installed to: $TargetExe" -ForegroundColor Green

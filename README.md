@@ -241,6 +241,7 @@ bgrec start --background
 | No audio | Check mic privacy: Settings → Privacy → Microphone |
 | FLAC/MP3 fails / pydub ffmpeg warning | Re-run `install-portable.cmd` or `install.ps1` (auto-installs ffmpeg). Manual: `winget install -e Gyan.FFmpeg`, then open a new terminal. Without ffmpeg, recordings stay WAV. |
 | Upload fails | Run `bgrec login-google`; check `logs\upload.log` |
+| `No module named typer` / `main.py` in traceback | Wrong launcher on PATH. Run `where bgrec` — use `%LOCALAPPDATA%\BackgroundAudioRecorder\bin\bgrec.exe`. Remove legacy `%LOCALAPPDATA%\BackgroundAudioRecorder\bgrec.cmd` and re-run `install-portable.cmd`, or rebuild the exe after updating PyInstaller settings. |
 | Device disconnect | Recorder auto-retries every few seconds |
 
 ## License
