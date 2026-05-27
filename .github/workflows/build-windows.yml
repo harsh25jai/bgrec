@@ -63,32 +63,64 @@ jobs:
           FORCE: ${{ github.event.inputs.force_release }}
           TAG: ${{ steps.ver.outputs.tag }}
           VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           SHOULD=false
+          REASON=""
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          git fetch origin --tags --force
+
+          release_has_assets() {
+            if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+              return 1
+            fi
+            local count
+            count="$(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets | length')"
+            [[ "$count" -gt 0 ]]
+          }
+
+          tag_points_here() {
+            git rev-parse "$TAG" >/dev/null 2>&1 \
+              && [[ "$(git rev-parse "$TAG^{}")" == "$GITHUB_SHA" ]]
+          }
+
+          if [[ "$FORCE" == "true" ]]; then
             SHOULD=true
-            echo "Manual workflow_dispatch for ${TAG}"
+            REASON="force_release"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            SHOULD=true
+            REASON="workflow_dispatch"
           else
             BEFORE="$(git show "${{ github.event.before }}:pyproject.toml" 2>/dev/null || true)"
             OLD="$(echo "$BEFORE" | grep -E '^\s*version\s*=' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || true)"
             if [[ -z "$OLD" ]]; then
               SHOULD=true
-              echo "First release or no parent version — releasing ${TAG}"
+              REASON="no parent version (first release)"
             elif [[ "$OLD" != "$VERSION" ]]; then
               SHOULD=true
-              echo "Version bump: ${OLD} -> ${VERSION}"
+              REASON="version bump ${OLD} -> ${VERSION}"
+            elif ! git rev-parse "$TAG" >/dev/null 2>&1; then
+              SHOULD=true
+              REASON="tag ${TAG} does not exist yet (publish ${VERSION})"
+            elif tag_points_here && ! release_has_assets; then
+              SHOULD=true
+              REASON="tag ${TAG} at this commit but release assets missing (retry)"
+            elif tag_points_here && release_has_assets; then
+              REASON="already published ${TAG} at this commit"
+            elif git rev-parse "$TAG" >/dev/null 2>&1; then
+              REASON="version unchanged (${VERSION}); tag ${TAG} exists on another commit — bump version in pyproject.toml to release again"
             else
-              echo "pyproject.toml changed but version still ${VERSION} — skip"
+              SHOULD=true
+              REASON="publish ${VERSION}"
             fi
           fi
 
-          if [[ "$FORCE" == "true" ]]; then
-            SHOULD=true
-            echo "force_release enabled"
+          if [[ "$SHOULD" == "true" ]]; then
+            echo "Will release: ${REASON}"
+          else
+            echo "Skip: ${REASON}"
           fi
-
           echo "should_plan=${SHOULD}" >> "$GITHUB_OUTPUT"
 
       - name: Ensure tag at ${{ github.sha }}
@@ -137,36 +169,13 @@ jobs:
         id: gate
         env:
           SHOULD_PLAN: ${{ steps.plan.outputs.should_plan }}
-          FORCE: ${{ github.event.inputs.force_release }}
-          DID_PUSH: ${{ steps.sync.outputs.did_push }}
-          TAG: ${{ steps.ver.outputs.tag }}
-          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [[ "$SHOULD_PLAN" != "true" ]]; then
+          if [[ "$SHOULD_PLAN" == "true" ]]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
             echo "should_build=false" >> "$GITHUB_OUTPUT"
-            exit 0
           fi
-          if [[ "$FORCE" == "true" ]]; then
-            echo "force_release — running Windows build."
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [[ "$DID_PUSH" == "true" ]]; then
-            echo "New tag — running Windows build."
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # Tag already at this commit (retry after failed build)
-          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            if gh release view "$TAG" --repo "$REPO" --json assets -q '.assets | length' | grep -qv '^0$'; then
-              echo "Release ${TAG} already has assets — skip build (use workflow_dispatch + force_release to rebuild)."
-              echo "should_build=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          echo "Retry — release missing assets."
-          echo "should_build=true" >> "$GITHUB_OUTPUT"
 
   build-release:
     needs: tag
