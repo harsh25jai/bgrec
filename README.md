@@ -184,17 +184,32 @@ You can also trigger the build in the browser: **GitHub → Actions → Build Wi
 
 ### Build on Windows (local)
 
-```powershell
+```cmd
 pip install -r requirements-windows.txt
 python scripts\build_exe.py
-.\scripts\package-windows-release.ps1
-# ZIP: dist\BackgroundAudioRecorder-Windows.zip
+scripts\package-windows-release.cmd
 ```
+
+Alternatives (same output ZIP):
+
+```cmd
+scripts\package-windows-release.cmd
+bash scripts/package-windows-release.sh
+powershell -File scripts\package-windows-release.ps1
+```
+
+Output: `dist\BackgroundAudioRecorder-Windows.zip`
 
 ### Install portable EXE on target PC
 
+```cmd
+REM After unzipping the release folder:
+install-portable.cmd
+```
+
+Or PowerShell:
+
 ```powershell
-# After unzipping the release folder:
 Set-ExecutionPolicy -Scope Process Bypass
 .\install-portable.ps1
 
