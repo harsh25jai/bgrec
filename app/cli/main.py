@@ -16,6 +16,10 @@ from app.platform_check import require_windows
 
 require_windows()
 
+from app.runtime_bootstrap import bootstrap_runtime
+
+bootstrap_runtime()
+
 from app.config.settings import (
     AppConfig,
     default_config_path,
@@ -43,6 +47,7 @@ from app.config.migrate import get_config_schema_version, merge_config_defaults
 from app.config.migrate import load_config_meta
 from app.updater.apply import apply_update, is_ota_target_install, read_current_meta, rollback_exe
 from app.updater.service import check_for_updates, ensure_update_repo, try_auto_apply
+from app.health.report import assess_health, format_issues_for_status
 from app.version import get_version
 
 app = typer.Typer(
@@ -152,12 +157,21 @@ def status() -> None:
         app_folder_name=cfg.google.app_folder_name,
     )
     auth_key, auth_msg = drive.google_auth_status()
+    active = is_daemon_active(state)
+    health = assess_health(cfg, state, daemon_active=active, auth_key=auth_key, auth_msg=auth_msg)
 
     table = Table(title="bgrec")
     table.add_column("Field", style="cyan")
     table.add_column("Value")
-
-    active = is_daemon_active(state)
+    if health.working_properly:
+        table.add_row("Working properly", "[green]yes[/green]")
+    else:
+        table.add_row("Working properly", "[red]no[/red]")
+    issues_text = format_issues_for_status(health.issues)
+    if health.issues:
+        table.add_row("Issues", f"[red]{issues_text}[/red]")
+    else:
+        table.add_row("Issues", "[green]none[/green]")
     table.add_row("Running", "yes" if active else "no")
     table.add_row("PID", str(state.pid or "—"))
     if state.last_chunk_at:

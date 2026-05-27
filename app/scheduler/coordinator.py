@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app.config.settings import AppConfig, load_config
 from app.platform_check import require_windows
+from app.runtime_bootstrap import bootstrap_runtime
 from app.crypto.encryption import EncryptionManager
 from app.logging.setup import configure_logging, get_logger
 from app.recorder.audio_recorder import ChunkRecorder
@@ -26,6 +27,7 @@ log = get_logger("coordinator")
 class ServiceCoordinator:
     def __init__(self, config: AppConfig | None = None) -> None:
         require_windows()
+        bootstrap_runtime()
         self.config = config or load_config()
         self.paths = self.config.ensure_directories()
         configure_logging(
@@ -72,6 +74,8 @@ class ServiceCoordinator:
     def _on_chunk(self, path: Path) -> None:
         self.state.last_chunk_at = time.time()
         self.state.chunks_recorded += 1
+        if self.state.clear_issue("recording"):
+            pass
         self.state.save(self.state_path)
         if self.config.upload.enabled:
             self.upload_queue.enqueue(path)
@@ -101,9 +105,19 @@ class ServiceCoordinator:
             return False
         if self.state.last_chunk_at:
             stale_limit = self.config.recording.chunk_duration_seconds * 2.5
-            if time.time() - self.state.last_chunk_at > stale_limit:
+            ago = time.time() - self.state.last_chunk_at
+            if ago > stale_limit:
+                msg = f"No new audio chunk for {int(ago)}s"
+                if self.state.set_issue("recording", msg):
+                    self.state.save(self.state_path)
                 self._recycle_recorder("no recent audio chunks (possible sleep or mic loss)")
                 return False
+        elif self.state.started_at:
+            grace = self.config.recording.chunk_duration_seconds * 2
+            if time.time() - self.state.started_at > grace:
+                msg = "No chunks recorded since service started"
+                if self.state.set_issue("recording", msg):
+                    self.state.save(self.state_path)
         if self.config.upload.enabled and self.state.pending_uploads:
             self.upload_queue.nudge()
         return True
@@ -119,6 +133,7 @@ class ServiceCoordinator:
         self.state.daemon_executable = sys.executable
         self.state.running = True
         self.state.started_at = time.time()
+        self.state.clear_issue("daemon")
         self._touch_heartbeat()
         self.state.save(self.state_path)
 

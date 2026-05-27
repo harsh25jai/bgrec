@@ -104,6 +104,7 @@ class UploadQueue:
                 self.process_pending()
             except Exception as exc:
                 log.exception("Upload worker error: {}", exc)
+                self._persist_issue("upload", str(exc))
             self._stop.wait(self.config.upload.retry_delay_seconds)
 
     def _prepare_upload_file(self, local_path: Path, remote_name: str) -> tuple[Path, str, Path | None]:
@@ -129,17 +130,40 @@ class UploadQueue:
         with self._process_lock:
             return self._process_pending_unlocked(blocking)
 
+    def _persist_issue(self, code: str, message: str) -> None:
+        if self.state.set_issue(code, message):
+            self.state.save(self.state_path)
+
+    def _clear_issues(self, *codes: str) -> None:
+        changed = False
+        for code in codes:
+            if self.state.clear_issue(code):
+                changed = True
+        if changed:
+            self.state.save(self.state_path)
+
+    @staticmethod
+    def _issue_code_for_upload_error(message: str) -> str:
+        lower = message.lower()
+        if "tls" in lower or "certificate" in lower or "ssl" in lower:
+            return "tls"
+        return "upload"
+
     def _process_pending_unlocked(self, blocking: bool = False) -> int:
         auth_key, auth_msg = self.drive.google_auth_status()
         if auth_key != "authenticated":
             log.debug("Google upload deferred: {}", auth_msg)
+            self._persist_issue("google_auth", auth_msg)
             self._recover_orphans()
             return 0
 
         try:
             self.drive.authenticate(interactive=False)
+            self._clear_issues("google_auth", "tls")
         except Exception as exc:
+            msg = str(exc)
             log.warning("Drive auth failed: {} — files stay queued locally", exc)
+            self._persist_issue(self._issue_code_for_upload_error(msg), msg)
             self._recover_orphans()
             return 0
 
@@ -184,10 +208,17 @@ class UploadQueue:
                     uploaded += 1
                 else:
                     log.error("Failed upload after retries: {} — {}", item.remote_name, err)
+                    if err:
+                        code = self._issue_code_for_upload_error(err)
+                        self.state.set_issue(code, err)
                 self.state.save(self.state_path)
 
         if uploaded:
             log.info("Uploaded {} file(s) to Drive", uploaded)
+        if uploaded and not self.state.pending_uploads:
+            self._clear_issues("upload", "tls", "google_auth")
+        elif uploaded:
+            self._clear_issues("google_auth")
         return uploaded
 
     def _recover_orphans(self) -> list[PendingUpload]:
@@ -230,10 +261,16 @@ class UploadQueue:
         for f in sorted(recordings_dir.iterdir()):
             if not f.is_file() or f.suffix.lower() not in AUDIO_SUFFIXES:
                 continue
+            if f.suffix.lower() == ".wav":
+                mp3 = f.with_suffix(".mp3")
+                if mp3.exists():
+                    continue
             key = str(f.resolve())
             if key in seen:
                 continue
             if enc_dir.exists() and (enc_dir / f"{f.name}.enc").exists():
+                continue
+            if (self.pending_dir / f.name).exists():
                 continue
             try:
                 queued = self._enqueue_unlocked(f)

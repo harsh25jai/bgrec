@@ -36,6 +36,8 @@ MODULES = [
     "httplib2",
     "uritemplate",
     "tomli_w",
+    "certifi",
+    "packaging",
 ]
 
 

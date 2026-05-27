@@ -91,12 +91,16 @@ Write-Host "Installed to: $TargetExe" -ForegroundColor Green
 
 if (-not $NoAutoStart) {
     Write-Host "`n==> Starting recorder in background..." -ForegroundColor Cyan
-    & $TargetExe start --background
-    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-        Write-Host "Could not start automatically. After a new terminal: bgrec start --background" -ForegroundColor Yellow
+    & $TargetExe start --background 2>&1 | Out-Null
+    Start-Sleep -Seconds 4
+    $statusText = (& $TargetExe status 2>&1 | Out-String)
+    if ($statusText -match 'Working properly\s+\|\s+yes') {
+        Write-Host "Recorder is running and healthy." -ForegroundColor Green
+    } elseif ($statusText -match 'Running\s+\|\s+yes') {
+        Write-Host "Recorder process is up but has issues — run: bgrec status" -ForegroundColor Yellow
     } else {
-        Write-Host "Recorder is running." -ForegroundColor Green
-        & $TargetExe status 2>$null
+        Write-Host "Daemon may still be starting. Check: bgrec status" -ForegroundColor Yellow
+        Write-Host "Logs: $InstallDir\logs\daemon-spawn.log" -ForegroundColor DarkGray
     }
 }
 

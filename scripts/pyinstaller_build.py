@@ -54,6 +54,8 @@ HIDDEN_IMPORTS = [
     "app.updater.service",
     "app.updater.bundled",
     "app.updater.scheduler",
+    "app.runtime_bootstrap",
+    "certifi",
 ]
 
 # collect-all bundles package data; avoid copy-metadata (often breaks on Windows).
@@ -63,6 +65,7 @@ COLLECT_ALL = [
     "rich",
     "sounddevice",
     "cryptography",
+    "certifi",
     "googleapiclient",
     "google_auth_oauthlib",
 ]
