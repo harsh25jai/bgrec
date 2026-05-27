@@ -17,6 +17,8 @@ from app.utils.paths import safe_resolve
 
 log = get_logger("upload_queue")
 
+AUDIO_SUFFIXES = {".mp3", ".flac", ".wav"}
+
 
 def plain_remote_name(remote_name: str, local_path: Path) -> str:
     """Drive filename: plaintext audio (never .enc)."""
@@ -46,9 +48,14 @@ class UploadQueue:
         self.pending_dir = paths["pending_uploads"]
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._process_lock = threading.Lock()
 
     def enqueue(self, source: Path) -> Path:
         """Queue a recording for upload. If encryption is on, keep .enc locally; upload plaintext to Drive."""
+        with self._process_lock:
+            return self._enqueue_unlocked(source)
+
+    def _enqueue_unlocked(self, source: Path) -> Path:
         safe_resolve(source, self.paths["recordings"])
         self.pending_dir.mkdir(parents=True, exist_ok=True)
 
@@ -87,6 +94,10 @@ class UploadQueue:
         if self._thread:
             self._thread.join(timeout=30)
 
+    def nudge(self) -> int:
+        """Recover stray files and try uploads (after boot, wake, or reconnect)."""
+        return self.process_pending(blocking=False)
+
     def _worker_loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -114,20 +125,26 @@ class UploadQueue:
     def process_pending(self, blocking: bool = False) -> int:
         if not self.config.upload.enabled:
             return 0
+
+        with self._process_lock:
+            return self._process_pending_unlocked(blocking)
+
+    def _process_pending_unlocked(self, blocking: bool = False) -> int:
         auth_key, auth_msg = self.drive.google_auth_status()
         if auth_key != "authenticated":
-            log.warning("Google upload skipped: {}", auth_msg)
+            log.debug("Google upload deferred: {}", auth_msg)
+            self._recover_orphans()
             return 0
 
         try:
             self.drive.authenticate(interactive=False)
         except Exception as exc:
-            log.warning("Drive auth failed: {} — files stay in local queue", exc)
+            log.warning("Drive auth failed: {} — files stay queued locally", exc)
+            self._recover_orphans()
             return 0
 
+        self._recover_orphans()
         pending = list(self.state.pending_uploads)
-        if not pending:
-            pending = self._recover_orphans()
 
         if not pending:
             return 0
@@ -169,6 +186,8 @@ class UploadQueue:
                     log.error("Failed upload after retries: {} — {}", item.remote_name, err)
                 self.state.save(self.state_path)
 
+        if uploaded:
+            log.info("Uploaded {} file(s) to Drive", uploaded)
         return uploaded
 
     def _recover_orphans(self) -> list[PendingUpload]:
@@ -179,7 +198,7 @@ class UploadQueue:
         for directory in scan_dirs:
             if not directory.exists():
                 continue
-            for f in directory.glob("*"):
+            for f in directory.iterdir():
                 if not f.is_file() or f.name.endswith(".lock"):
                     continue
                 key = str(f.resolve())
@@ -191,7 +210,56 @@ class UploadQueue:
                 orphans.append(pu)
                 seen.add(key)
 
+        orphans.extend(self._recover_plain_recordings(seen))
+        orphans.extend(self._recover_stale_plain_next_to_encrypted())
+
         if orphans:
             self.state.save(self.state_path)
-            log.info("Recovered {} orphan pending uploads", len(orphans))
+            log.info("Recovered {} orphan pending upload(s)", len(orphans))
         return orphans
+
+    def _recover_plain_recordings(self, seen: set[str]) -> list[PendingUpload]:
+        """Pick up completed chunks left in recordings/ (e.g. offline, crash, sleep gap)."""
+        recordings_dir = self.paths["recordings"]
+        if not recordings_dir.exists():
+            return []
+
+        recovered: list[PendingUpload] = []
+        enc_dir = recordings_dir / "encrypted"
+
+        for f in sorted(recordings_dir.iterdir()):
+            if not f.is_file() or f.suffix.lower() not in AUDIO_SUFFIXES:
+                continue
+            key = str(f.resolve())
+            if key in seen:
+                continue
+            if enc_dir.exists() and (enc_dir / f"{f.name}.enc").exists():
+                continue
+            try:
+                queued = self._enqueue_unlocked(f)
+                key = str(queued.resolve())
+                if key not in seen:
+                    seen.add(key)
+                    for pu in self.state.pending_uploads:
+                        if pu.local_path == key:
+                            recovered.append(pu)
+                            break
+                log.info("Re-queued recording for upload: {}", f.name)
+            except Exception as exc:
+                log.warning("Could not re-queue {}: {}", f.name, exc)
+        return recovered
+
+    def _recover_stale_plain_next_to_encrypted(self) -> list[PendingUpload]:
+        """Remove duplicate plaintext when .enc already exists."""
+        recordings_dir = self.paths["recordings"]
+        enc_dir = recordings_dir / "encrypted"
+        if not enc_dir.exists():
+            return []
+        for f in recordings_dir.iterdir():
+            if not f.is_file() or f.suffix.lower() not in AUDIO_SUFFIXES:
+                continue
+            enc_path = enc_dir / f"{f.name}.enc"
+            if enc_path.exists():
+                f.unlink(missing_ok=True)
+                log.debug("Removed stale plaintext (encrypted copy kept): {}", f.name)
+        return []

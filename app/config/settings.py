@@ -72,7 +72,7 @@ class EncryptionConfig:
 @dataclass
 class RetentionConfig:
     local_retention_days: int = 7
-    delete_after_upload: bool = False
+    delete_after_upload: bool = True
 
 
 @dataclass

@@ -74,7 +74,8 @@ class ServiceCoordinator:
         self.state.save(self.state_path)
         if self.config.upload.enabled:
             self.upload_queue.enqueue(path)
-        self.retention.run_cleanup()
+        pending_paths = {p.local_path for p in self.state.pending_uploads}
+        self.retention.run_cleanup(pending_paths)
 
     def _recycle_recorder(self, reason: str) -> None:
         log.warning("Recycling audio stream: {}", reason)
@@ -83,6 +84,9 @@ class ServiceCoordinator:
 
     def _on_system_resume(self) -> None:
         self._recycle_recorder("system resume from sleep/hibernate")
+        if self.config.upload.enabled:
+            log.info("System resumed — retrying pending uploads")
+            self.upload_queue.nudge()
 
     def _touch_heartbeat(self) -> None:
         self.state.last_heartbeat_at = time.time()
@@ -99,6 +103,8 @@ class ServiceCoordinator:
             if time.time() - self.state.last_chunk_at > stale_limit:
                 self._recycle_recorder("no recent audio chunks (possible sleep or mic loss)")
                 return False
+        if self.config.upload.enabled and self.state.pending_uploads:
+            self.upload_queue.nudge()
         return True
 
     def start(self) -> None:
@@ -118,6 +124,13 @@ class ServiceCoordinator:
         self.sleep_guard.acquire()
         self.recorder.start()
         self.upload_queue.start_worker()
+        if self.config.upload.enabled:
+            recovered = self.upload_queue.nudge()
+            if recovered or self.state.pending_uploads:
+                log.info(
+                    "Upload queue on start: {} pending file(s)",
+                    len(self.state.pending_uploads),
+                )
         self.watchdog.start()
         log.info("Service coordinator started (pid={})", self.state.pid)
 
