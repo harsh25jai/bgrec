@@ -14,6 +14,8 @@ This is not stealth software: startup uses the standard per-user **Run** registr
 - **HKCU Run** startup integration (optional)
 - Rotating structured logs (loguru)
 - Local retention policy
+- **Sleep inhibition** while recording (keeps the system awake; display may still turn off)
+- Auto-recovery of the mic stream after sleep/hibernate or stalled chunks
 - Single-file **PyInstaller** build (`bgrec.exe`)
 
 ## Requirements
@@ -144,6 +146,22 @@ Removes with:
 ```powershell
 bgrec uninstall-startup
 ```
+
+## Recording while the PC sleeps or the lid is closed
+
+Windows **cannot** record audio during true system sleep (S3) or hibernate — the CPU and microphone stack are off. bgrec instead:
+
+1. **Prevents system sleep** while the daemon is running (`prevent_sleep_during_recording = true` in `config.toml`, default **on**). The screen may still turn off; the machine stays awake enough to capture audio (useful with the lid closed on a laptop on AC power).
+2. **Recovers after resume** if sleep still happens (battery policy, manual sleep, etc.): Windows power notifications and a faster watchdog restart the microphone stream when chunks stop arriving.
+
+To allow normal sleep while bgrec is installed, set:
+
+```toml
+[recording]
+prevent_sleep_during_recording = false
+```
+
+Check status with `bgrec status` (shows **Sleep inhibition** on/off).
 
 ## CLI reference
 

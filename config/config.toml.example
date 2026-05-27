@@ -13,6 +13,8 @@ mp3_bitrate = "64k"
 silence_detection = false
 silence_threshold_db = -40.0
 silence_min_duration_seconds = 30.0
+# Keep system awake while recording (display may still turn off). Required for recording with lid closed.
+prevent_sleep_during_recording = true
 
 [upload]
 enabled = true

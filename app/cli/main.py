@@ -106,6 +106,10 @@ def status() -> None:
     table.add_row("Upload queue (cache)", str(paths["pending_uploads"]))
     table.add_row("Encryption", "enabled" if cfg.encryption.enabled else "disabled")
     table.add_row("Upload", "enabled" if cfg.upload.enabled else "disabled")
+    table.add_row(
+        "Sleep inhibition",
+        "on" if cfg.recording.prevent_sleep_during_recording else "off",
+    )
     if auth_key == "authenticated":
         table.add_row("Google auth", f"[green]{auth_msg}[/green]")
     else:

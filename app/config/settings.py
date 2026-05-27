@@ -53,6 +53,7 @@ class RecordingConfig:
     silence_detection: bool = False
     silence_threshold_db: float = -40.0
     silence_min_duration_seconds: float = 30.0
+    prevent_sleep_during_recording: bool = True
 
 
 @dataclass
