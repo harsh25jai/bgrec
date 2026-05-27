@@ -29,7 +29,10 @@ class UpdateScheduler:
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="ota-scheduler", daemon=True)
         self._thread.start()
-        log.debug("OTA scheduler started (every {}h)", self.config.update.check_interval_hours)
+        log.info(
+            "OTA scheduler started (check now, then every {}h)",
+            self.config.update.check_interval_hours,
+        )
 
     def stop(self) -> None:
         self._stop.set()
@@ -37,8 +40,10 @@ class UpdateScheduler:
             self._thread.join(timeout=10)
 
     def _loop(self) -> None:
-        while not self._stop.wait(self._interval_seconds()):
+        while not self._stop.is_set():
             try:
                 run_periodic_update_check()
             except Exception as exc:
                 log.exception("Periodic OTA check failed: {}", exc)
+            if self._stop.wait(self._interval_seconds()):
+                break

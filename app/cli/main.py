@@ -197,6 +197,10 @@ def status() -> None:
     table.add_row("Startup registry", str(WindowsStartupManager().is_enabled()))
     table.add_row("App version", get_version())
     table.add_row("OTA auto-apply", "on" if cfg.update.auto_apply else "off")
+    if cfg.update.enabled and cfg.update.auto_apply:
+        table.add_row("OTA check interval", f"{cfg.update.check_interval_hours}h (also on each daemon start)")
+    elif cfg.update.enabled:
+        table.add_row("OTA check interval", f"{cfg.update.check_interval_hours}h (apply manual: bgrec update --yes)")
     ota_meta = read_current_meta()
     if ota_meta.get("version"):
         table.add_row("Last OTA version", str(ota_meta.get("version")))
@@ -369,6 +373,12 @@ def upload_pending() -> None:
 
 config_app = typer.Typer(help="View or update configuration.")
 app.add_typer(config_app, name="config")
+
+
+@config_app.command("show")
+def config_show() -> None:
+    """Show current config.toml (same as `bgrec config`)."""
+    console.print_json(json.dumps(_config_display(_load())))
 
 
 @config_app.callback(invoke_without_command=True)
