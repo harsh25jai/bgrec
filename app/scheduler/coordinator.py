@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from app.crypto.encryption import EncryptionManager
 from app.logging.setup import configure_logging, get_logger
 from app.recorder.audio_recorder import ChunkRecorder
 from app.retention.cleanup import RetentionManager
+from app.service.singleton import DaemonInstanceLock
 from app.service.sleep_guard import SleepGuard
 from app.service.state import DaemonState
 from app.service.watchdog import Watchdog
@@ -64,6 +66,7 @@ class ServiceCoordinator:
             enabled=self.config.recording.prevent_sleep_during_recording,
             on_resume=self._on_system_resume,
         )
+        self._instance_lock = DaemonInstanceLock()
 
     def _on_chunk(self, path: Path) -> None:
         self.state.last_chunk_at = time.time()
@@ -81,7 +84,12 @@ class ServiceCoordinator:
     def _on_system_resume(self) -> None:
         self._recycle_recorder("system resume from sleep/hibernate")
 
+    def _touch_heartbeat(self) -> None:
+        self.state.last_heartbeat_at = time.time()
+        self.state.save(self.state_path)
+
     def _health_check(self) -> bool:
+        self._touch_heartbeat()
         if not self.recorder.is_running:
             log.warning("Watchdog: recorder not running — restarting")
             self.recorder.start()
@@ -94,9 +102,17 @@ class ServiceCoordinator:
         return True
 
     def start(self) -> None:
+        if not self._instance_lock.acquire():
+            raise RuntimeError(
+                "Another bgrec recording daemon is already running. "
+                "Run: bgrec stop   then: bgrec start --background"
+            )
+
         self.state.pid = os.getpid()
+        self.state.daemon_executable = sys.executable
         self.state.running = True
         self.state.started_at = time.time()
+        self._touch_heartbeat()
         self.state.save(self.state_path)
 
         self.sleep_guard.acquire()
@@ -110,8 +126,10 @@ class ServiceCoordinator:
         self.recorder.stop()
         self.upload_queue.stop_worker()
         self.sleep_guard.release()
+        self._instance_lock.release()
         self.state.running = False
         self.state.pid = None
+        self.state.daemon_executable = None
         self.state.save(self.state_path)
         log.info("Service coordinator stopped")
 

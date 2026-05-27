@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -24,7 +25,17 @@ from app.config.settings import (
 from app.logging.setup import configure_logging, get_logger
 from app.recorder.audio_recorder import list_input_devices
 from app.scheduler.coordinator import ServiceCoordinator
-from app.service.daemon import is_process_running, run_foreground, spawn_background, state_path, stop_daemon
+from app.service.daemon import (
+    StopResult,
+    is_bgrec_process,
+    is_daemon_active,
+    is_process_running,
+    reconcile_daemon_state,
+    run_foreground,
+    spawn_background,
+    state_path,
+    stop_daemon,
+)
 from app.service.state import DaemonState
 from app.startup.windows_startup import WindowsStartupManager
 from app.uploader.drive_client import DriveClient
@@ -52,14 +63,36 @@ def start(
     paths = cfg.ensure_directories()
     configure_logging(paths["logs"], level=cfg.logging.level)
 
-    state = DaemonState.load(state_path())
-    if state.running and state.pid and is_process_running(state.pid):
+    spath = state_path()
+    state = reconcile_daemon_state(DaemonState.load(spath), spath)
+    if is_daemon_active(state):
         console.print(f"[yellow]Already running (pid={state.pid})[/yellow]")
         raise typer.Exit(0)
 
+    # Orphan: bgrec process without mutex / stale state after a crash
+    if (
+        state.pid
+        and is_process_running(state.pid)
+        and is_bgrec_process(state.pid, state.daemon_executable)
+    ):
+        console.print(f"[dim]Cleaning up orphan process (pid={state.pid})…[/dim]")
+        stop_daemon()
+        time.sleep(1.0)
+        state = reconcile_daemon_state(DaemonState.load(spath), spath)
+
     if background and not foreground:
-        pid = spawn_background()
-        console.print(f"[green]Started background process (pid={pid})[/green]")
+        spawn_background()
+        time.sleep(2.0)
+        state = reconcile_daemon_state(DaemonState.load(spath), spath)
+        if is_daemon_active(state):
+            console.print(f"[green]Started background daemon (pid={state.pid})[/green]")
+        else:
+            console.print(
+                "[red]Failed to start daemon.[/red] Check logs in "
+                f"{_load().ensure_directories()['logs']} "
+                "(especially daemon-spawn.log and bgrec.log)."
+            )
+            raise typer.Exit(1)
         return
 
     def factory():
@@ -69,12 +102,34 @@ def start(
 
 
 @app.command()
+def restart(
+    background: bool = typer.Option(True, "--background/--foreground", help="Restart detached."),
+) -> None:
+    """Stop the daemon if running, then start it again."""
+    stop_daemon()
+    time.sleep(1.0)
+    if background:
+        start(background=True, foreground=False)
+    else:
+        start(background=False, foreground=False)
+
+
+@app.command()
 def stop() -> None:
     """Stop the background recording service."""
-    if stop_daemon():
+    result = stop_daemon()
+    if result == StopResult.STOPPED:
         console.print("[green]Service stopped[/green]")
+    elif result == StopResult.FAILED:
+        state = DaemonState.load(state_path())
+        console.print(
+            f"[red]Could not stop process (pid={state.pid}).[/red] "
+            "Try closing it in Task Manager or run as admin: "
+            f"taskkill /PID {state.pid} /F"
+        )
+        raise typer.Exit(1)
     else:
-        console.print("[yellow]Service was not running[/yellow]")
+        console.print("[yellow]Service was not running (stale state cleared if needed)[/yellow]")
 
 
 @app.command()
@@ -82,7 +137,8 @@ def status() -> None:
     """Show service status."""
     cfg = _load()
     paths = cfg.ensure_directories()
-    state = DaemonState.load(paths["root"] / "state.json")
+    spath = paths["root"] / "state.json"
+    state = reconcile_daemon_state(DaemonState.load(spath), spath)
 
     drive = DriveClient(
         paths["credentials"],
@@ -96,9 +152,14 @@ def status() -> None:
     table.add_column("Field", style="cyan")
     table.add_column("Value")
 
-    alive = state.pid and is_process_running(state.pid) if state.pid else False
-    table.add_row("Running", str(alive and state.running))
+    active = is_daemon_active(state)
+    table.add_row("Running", "yes" if active else "no")
     table.add_row("PID", str(state.pid or "—"))
+    if state.last_chunk_at:
+        ago = int(time.time() - state.last_chunk_at)
+        table.add_row("Last chunk", f"{ago}s ago")
+    else:
+        table.add_row("Last chunk", "never")
     table.add_row("Chunks recorded", str(state.chunks_recorded))
     table.add_row("Pending uploads", str(len(state.pending_uploads)))
     table.add_row("Config", str(default_config_path()))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import os
 import signal
 import subprocess
@@ -9,11 +10,18 @@ import sys
 import time
 from pathlib import Path
 
-from app.config.settings import default_config_path, load_config
+from app.config.settings import load_config
 from app.logging.setup import configure_logging, get_logger
+from app.service.singleton import is_daemon_lock_held
 from app.service.state import DaemonState
 
 log = get_logger("daemon")
+
+
+class StopResult(enum.Enum):
+    STOPPED = "stopped"
+    NOT_RUNNING = "not_running"
+    FAILED = "failed"
 
 
 def state_path() -> Path:
@@ -21,28 +29,139 @@ def state_path() -> Path:
     return cfg.ensure_directories()["root"] / "state.json"
 
 
-def is_process_running(pid: int) -> bool:
+def process_image_path(pid: int) -> str | None:
+    """Full path to the process executable, or None if inaccessible."""
     if pid <= 0:
-        return False
-    if sys.platform == "win32":
-        import ctypes
+        return None
+    if sys.platform != "win32":
+        try:
+            return os.readlink(f"/proc/{pid}/exe")
+        except OSError:
+            return None
 
-        kernel32 = ctypes.windll.kernel32
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if handle:
-            kernel32.CloseHandle(handle)
-            return True
-        return False
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
     try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
+        size = wintypes.DWORD(32_768)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return buf.value
+    finally:
+        kernel32.CloseHandle(handle)
+    return None
+
+
+def is_process_running(pid: int) -> bool:
+    return process_image_path(pid) is not None
+
+
+def is_bgrec_process(pid: int, expected_executable: str | None = None) -> bool:
+    """True if PID looks like this app's daemon (not a recycled unrelated process)."""
+    image = process_image_path(pid)
+    if not image:
         return False
+    if expected_executable:
+        try:
+            if Path(image).resolve() == Path(expected_executable).resolve():
+                return True
+        except OSError:
+            pass
+    name = Path(image).name.lower()
+    if name == "bgrec.exe":
+        return True
+    if "bgrec" in image.replace("\\", "/").lower():
+        return True
+    if name.startswith("python"):
+        try:
+            out = subprocess.run(
+                [
+                    "wmic",
+                    "process",
+                    "where",
+                    f"processid={pid}",
+                    "get",
+                    "commandline",
+                    "/format:list",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            cmd = (out.stdout or "").lower()
+            return "bgrec" in cmd or "app.cli.main" in cmd
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    return False
+
+
+def reconcile_daemon_state(state: DaemonState, path: Path) -> DaemonState:
+    """
+    Fix state.json when the daemon died, PID was reused, or flags disagree with reality.
+    """
+    changed = False
+    lock_held = is_daemon_lock_held()
+
+    if state.pid:
+        alive = is_process_running(state.pid)
+        ours = alive and is_bgrec_process(state.pid, state.daemon_executable)
+        if not alive or not ours:
+            if state.running or state.pid:
+                log.debug(
+                    "Clearing stale daemon state (pid={}, alive={}, ours={}, lock={})",
+                    state.pid,
+                    alive,
+                    ours,
+                    lock_held,
+                )
+            state.running = False
+            state.pid = None
+            state.daemon_executable = None
+            changed = True
+        elif not lock_held and state.running:
+            # Process exists but mutex gone — coordinator likely crashed without cleanup
+            log.debug("Daemon PID {} alive but mutex free — clearing running flag", state.pid)
+            state.running = False
+            changed = True
+    elif state.running:
+        state.running = False
+        changed = True
+
+    if not lock_held and not state.pid and state.running:
+        state.running = False
+        changed = True
+
+    if changed:
+        state.save(path)
+    return state
+
+
+def is_daemon_active(state: DaemonState | None = None) -> bool:
+    """True when the real recording daemon is up (mutex + matching PID)."""
+    path = state_path()
+    state = reconcile_daemon_state(state or DaemonState.load(path), path)
+    if not state.pid or not state.running:
+        return False
+    if not is_process_running(state.pid):
+        return False
+    if not is_bgrec_process(state.pid, state.daemon_executable):
+        return False
+    return is_daemon_lock_held()
 
 
 def spawn_background() -> int:
     """Start recorder in a detached background process."""
+    cfg = load_config()
+    paths = cfg.ensure_directories()
+    paths["logs"].mkdir(parents=True, exist_ok=True)
+    spawn_log = paths["logs"] / "daemon-spawn.log"
+
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "start", "--foreground"]
     else:
@@ -52,37 +171,59 @@ def spawn_background() -> int:
     if sys.platform == "win32":
         creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
 
-    proc = subprocess.Popen(
-        cmd,
-        creationflags=creationflags,
-        close_fds=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    with spawn_log.open("a", encoding="utf-8") as log_fh:
+        log_fh.write(f"\n--- spawn {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+        log_fh.flush()
+        proc = subprocess.Popen(
+            cmd,
+            creationflags=creationflags,
+            close_fds=True,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+        )
     return proc.pid
 
 
-def stop_daemon() -> bool:
-    state = DaemonState.load(state_path())
-    if not state.pid or not state.running:
-        return False
+def stop_daemon() -> StopResult:
+    path = state_path()
+    state = reconcile_daemon_state(DaemonState.load(path), path)
+
     pid = state.pid
+    if not pid or not is_process_running(pid):
+        return StopResult.NOT_RUNNING
+
+    if not is_bgrec_process(pid, state.daemon_executable):
+        state.running = False
+        state.pid = None
+        state.daemon_executable = None
+        state.save(path)
+        return StopResult.NOT_RUNNING
+
     if sys.platform == "win32":
         subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=False, capture_output=True)
     else:
         os.kill(pid, signal.SIGTERM)
+
     for _ in range(20):
         if not is_process_running(pid):
             state.running = False
             state.pid = None
-            state.save(state_path())
-            return True
+            state.daemon_executable = None
+            state.save(path)
+            return StopResult.STOPPED
         time.sleep(0.5)
-    return False
+
+    return StopResult.FAILED
 
 
 def run_foreground(coordinator_factory) -> None:
     """Block in foreground running the coordinator."""
+    path = state_path()
+    state = reconcile_daemon_state(DaemonState.load(path), path)
+    if state.pid and state.pid != os.getpid() and is_daemon_active(state):
+        log.error("Another bgrec daemon is already running (pid={})", state.pid)
+        sys.exit(1)
+
     coord = coordinator_factory()
     configure_logging(
         coord.paths["logs"],
@@ -101,7 +242,12 @@ def run_foreground(coordinator_factory) -> None:
     if sys.platform == "win32":
         signal.signal(signal.SIGBREAK, handle_signal)
 
-    coord.start()
+    try:
+        coord.start()
+    except RuntimeError as exc:
+        log.error("{}", exc)
+        sys.exit(1)
+
     log.info("Running in foreground; press Ctrl+C to stop")
     try:
         while True:
