@@ -29,6 +29,7 @@ from app.config.settings import (
 from app.logging.setup import configure_logging, get_logger
 from app.recorder.audio_recorder import list_input_devices
 from app.scheduler.coordinator import ServiceCoordinator
+from app.service.singleton import is_daemon_lock_held
 from app.service.daemon import (
     StopResult,
     is_bgrec_process,
@@ -39,6 +40,7 @@ from app.service.daemon import (
     spawn_background,
     state_path,
     stop_daemon,
+    wait_for_daemon_active,
 )
 from app.service.state import DaemonState
 from app.startup.windows_startup import WindowsStartupManager
@@ -99,15 +101,19 @@ def start(
 
     if background and not foreground:
         spawn_background()
-        time.sleep(2.0)
-        state = reconcile_daemon_state(DaemonState.load(spath), spath)
-        if is_daemon_active(state):
+        state = wait_for_daemon_active(timeout=25.0)
+        if state:
             console.print(f"[green]Started background daemon (pid={state.pid})[/green]")
+        elif is_daemon_lock_held():
+            console.print(
+                "[yellow]Daemon is still starting (PyInstaller may take 10–20s).[/yellow]\n"
+                "Check: bgrec status"
+            )
         else:
             console.print(
                 "[red]Failed to start daemon.[/red] Check logs in "
-                f"{_load().ensure_directories()['logs']} "
-                "(especially daemon-spawn.log and bgrec.log)."
+                f"{paths['logs']} (daemon-spawn.log, bgrec.log).\n"
+                "[dim]PYI temp-dir warnings on spawn are usually harmless.[/dim]"
             )
             raise typer.Exit(1)
         return
@@ -338,7 +344,7 @@ def update(
         typer.confirm(f"Download and install {result.manifest.version}?", abort=True)
 
     if unattended:
-        if try_auto_apply(cfg, result, unattended=True):
+        if try_auto_apply(cfg, result, unattended=True, force=force):
             raise typer.Exit(0)
         raise typer.Exit(1)
 

@@ -155,6 +155,25 @@ def is_daemon_active(state: DaemonState | None = None) -> bool:
     return is_daemon_lock_held()
 
 
+def wait_for_daemon_active(timeout: float = 20.0) -> DaemonState | None:
+    """
+    Poll until the background daemon holds the mutex and state.json is consistent.
+    PyInstaller one-file cold start often needs >2s before state is written.
+    """
+    path = state_path()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = reconcile_daemon_state(DaemonState.load(path), path)
+        if is_daemon_active(state):
+            return state
+        if is_daemon_lock_held():
+            time.sleep(0.25)
+            continue
+        time.sleep(0.5)
+    state = reconcile_daemon_state(DaemonState.load(path), path)
+    return state if is_daemon_active(state) else None
+
+
 def spawn_background() -> int:
     """Start recorder in a detached background process."""
     cfg = load_config()

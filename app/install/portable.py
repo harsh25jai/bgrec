@@ -63,24 +63,33 @@ def get_portable_bin_version() -> str | None:
     bin_exe = bin_exe_path()
     if not bin_exe.is_file():
         return None
+    from app.updater.apply import read_current_meta
+    from app.updater.manifest import compare_versions
+
+    candidates: list[str] = []
     probed = probe_frozen_exe_version(bin_exe)
     if probed:
-        return probed
-    from app.updater.apply import read_current_meta
-
+        candidates.append(probed)
     meta = read_current_meta().get("version")
     if meta:
         try:
-            return normalize_version(str(meta))
+            candidates.append(normalize_version(str(meta)))
         except ValueError:
             pass
-    return None
+    if not candidates:
+        return None
+    best = candidates[0]
+    for ver in candidates[1:]:
+        if compare_versions(ver, best) > 0:
+            best = ver
+    return best
 
 
 def get_installed_version_for_ota() -> str:
     """
     Version to compare against the remote manifest.
     Uses the portable bin when installed (not the Downloads copy path).
+    Prefers the highest of probed binary vs last successful OTA meta (avoids re-download loops).
     """
     if portable_install_exists():
         bin_ver = get_portable_bin_version()
