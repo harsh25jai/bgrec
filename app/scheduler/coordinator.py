@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from app.crypto.encryption import EncryptionManager
 from app.logging.setup import configure_logging, get_logger
 from app.recorder.audio_recorder import ChunkRecorder
 from app.retention.cleanup import RetentionManager
+from app.service.singleton import DaemonInstanceLock
+from app.service.sleep_guard import SleepGuard
 from app.service.state import DaemonState
 from app.service.watchdog import Watchdog
 from app.uploader.drive_client import DriveClient
@@ -57,7 +60,13 @@ class ServiceCoordinator:
             on_chunk=self._on_chunk,
         )
         self.retention = RetentionManager(self.config, self.paths)
-        self.watchdog = Watchdog(self._health_check, interval_seconds=60)
+        watchdog_interval = 15 if self.config.recording.prevent_sleep_during_recording else 60
+        self.watchdog = Watchdog(self._health_check, interval_seconds=watchdog_interval)
+        self.sleep_guard = SleepGuard(
+            enabled=self.config.recording.prevent_sleep_during_recording,
+            on_resume=self._on_system_resume,
+        )
+        self._instance_lock = DaemonInstanceLock()
 
     def _on_chunk(self, path: Path) -> None:
         self.state.last_chunk_at = time.time()
@@ -67,19 +76,46 @@ class ServiceCoordinator:
             self.upload_queue.enqueue(path)
         self.retention.run_cleanup()
 
+    def _recycle_recorder(self, reason: str) -> None:
+        log.warning("Recycling audio stream: {}", reason)
+        self.recorder.stop()
+        self.recorder.start()
+
+    def _on_system_resume(self) -> None:
+        self._recycle_recorder("system resume from sleep/hibernate")
+
+    def _touch_heartbeat(self) -> None:
+        self.state.last_heartbeat_at = time.time()
+        self.state.save(self.state_path)
+
     def _health_check(self) -> bool:
+        self._touch_heartbeat()
         if not self.recorder.is_running:
             log.warning("Watchdog: recorder not running — restarting")
             self.recorder.start()
             return False
+        if self.state.last_chunk_at:
+            stale_limit = self.config.recording.chunk_duration_seconds * 2.5
+            if time.time() - self.state.last_chunk_at > stale_limit:
+                self._recycle_recorder("no recent audio chunks (possible sleep or mic loss)")
+                return False
         return True
 
     def start(self) -> None:
+        if not self._instance_lock.acquire():
+            raise RuntimeError(
+                "Another bgrec recording daemon is already running. "
+                "Run: bgrec stop   then: bgrec start --background"
+            )
+
         self.state.pid = os.getpid()
+        self.state.daemon_executable = sys.executable
         self.state.running = True
         self.state.started_at = time.time()
+        self._touch_heartbeat()
         self.state.save(self.state_path)
 
+        self.sleep_guard.acquire()
         self.recorder.start()
         self.upload_queue.start_worker()
         self.watchdog.start()
@@ -89,8 +125,11 @@ class ServiceCoordinator:
         self.watchdog.stop()
         self.recorder.stop()
         self.upload_queue.stop_worker()
+        self.sleep_guard.release()
+        self._instance_lock.release()
         self.state.running = False
         self.state.pid = None
+        self.state.daemon_executable = None
         self.state.save(self.state_path)
         log.info("Service coordinator stopped")
 

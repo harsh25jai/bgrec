@@ -13,7 +13,7 @@ from app.logging.setup import get_logger
 
 log = get_logger("encryption")
 
-MAGIC = b"BAR1"  # Background Audio Recorder v1
+MAGIC = b"BAR1"  # bgrec encrypted file v1
 NONCE_SIZE = 12
 KEY_SIZE = 32
 

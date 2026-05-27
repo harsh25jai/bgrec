@@ -1,4 +1,4 @@
-# Background Audio Recorder
+# bgrec
 
 A **Windows 10/11** command-line utility for **user-consented** microphone recording with **AES-256-GCM encryption** and backup to **your own Google Drive**.
 
@@ -14,6 +14,8 @@ This is not stealth software: startup uses the standard per-user **Run** registr
 - **HKCU Run** startup integration (optional)
 - Rotating structured logs (loguru)
 - Local retention policy
+- **Sleep inhibition** while recording (keeps the system awake; display may still turn off)
+- Auto-recovery of the mic stream after sleep/hibernate or stalled chunks
 - Single-file **PyInstaller** build (`bgrec.exe`)
 
 ## Requirements
@@ -30,7 +32,7 @@ This is not stealth software: startup uses the standard per-user **Run** registr
 ## Project layout
 
 ```
-background-recorder/
+bgrec/
 ├── app/
 │   ├── recorder/       # Microphone capture & conversion
 │   ├── uploader/       # Google Drive client & queue
@@ -49,20 +51,21 @@ background-recorder/
 └── requirements.txt
 ```
 
-Data directory (default): `%LOCALAPPDATA%\BackgroundAudioRecorder\`
+Data directory (default): `%LOCALAPPDATA%\bgrec\`  
+(Existing installs under `%LOCALAPPDATA%\BackgroundAudioRecorder\` are still used automatically until you migrate data.)
 
 ## Quick start — one script on Windows (recommended)
 
 No zip, no repo copy. Push this project to GitHub once, then on any Windows PC paste **one line** into PowerShell:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass -Force; Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/YOUR_USER/background-recorder/main/install.ps1'))
+Set-ExecutionPolicy -Scope Process Bypass -Force; Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/YOUR_USER/bgrec/main/install.ps1'))
 ```
 
-Replace `YOUR_USER/background-recorder` with your repo. The script will:
+Replace `YOUR_USER/bgrec` with your repo. The script will:
 
 1. Download the app from GitHub  
-2. Install Python packages into `%LOCALAPPDATA%\BackgroundAudioRecorder\`  
+2. Install Python packages into `%LOCALAPPDATA%\bgrec\`  
 3. Add `bgrec` to your user PATH  
 4. Install **ffmpeg** via winget if it is not already on PATH  
 
@@ -70,14 +73,14 @@ Replace `YOUR_USER/background-recorder` with your repo. The script will:
 
 ```bash
 chmod +x scripts/print-install-oneliner.sh
-./scripts/print-install-oneliner.sh your-github-user/background-recorder
+./scripts/print-install-oneliner.sh your-github-user/bgrec
 ```
 
 **Or** save only `install.ps1` on a USB/email, open PowerShell on Windows, and run:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
-.\install.ps1 -GitHubRepo "your-github-user/background-recorder" -InstallPython
+.\install.ps1 -GitHubRepo "your-github-user/bgrec" -InstallPython
 ```
 
 `-InstallPython` uses `winget` when Python 3.11+ is missing. **ffmpeg** is installed automatically the same way (use `-SkipFfmpeg` to opt out).
@@ -96,7 +99,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 3. Create **OAuth 2.0 Client ID** → type **Desktop app**.
 4. Download JSON and save as:
 
-   `%LOCALAPPDATA%\BackgroundAudioRecorder\credentials\credentials.json`
+   `%LOCALAPPDATA%\bgrec\credentials\credentials.json`
 
 5. Authenticate:
 
@@ -108,7 +111,7 @@ bgrec login-google
 
 ### 3. Configure
 
-Edit `%LOCALAPPDATA%\BackgroundAudioRecorder\config.toml` or use:
+Edit `%LOCALAPPDATA%\bgrec\config.toml` or use:
 
 ```powershell
 bgrec config
@@ -144,6 +147,22 @@ Removes with:
 bgrec uninstall-startup
 ```
 
+## Recording while the PC sleeps or the lid is closed
+
+Windows **cannot** record audio during true system sleep (S3) or hibernate — the CPU and microphone stack are off. bgrec instead:
+
+1. **Prevents system sleep** while the daemon is running (`prevent_sleep_during_recording = true` in `config.toml`, default **on**). The screen may still turn off; the machine stays awake enough to capture audio (useful with the lid closed on a laptop on AC power).
+2. **Recovers after resume** if sleep still happens (battery policy, manual sleep, etc.): Windows power notifications and a faster watchdog restart the microphone stream when chunks stop arriving.
+
+To allow normal sleep while bgrec is installed, set:
+
+```toml
+[recording]
+prevent_sleep_during_recording = false
+```
+
+Check status with `bgrec status` (shows **Sleep inhibition** on/off).
+
 ## CLI reference
 
 | Command | Description |
@@ -169,7 +188,7 @@ PyInstaller **cannot** produce a Windows `.exe` on macOS. Use **GitHub Actions**
 brew install gh
 gh auth login
 git init
-gh repo create background-recorder --private --source=. --push
+gh repo create bgrec --private --source=. --push
 
 # Build on Windows cloud runner; download ZIP to dist/
 chmod +x scripts/build-windows-from-mac.sh
@@ -178,8 +197,8 @@ chmod +x scripts/build-windows-from-mac.sh
 
 Output:
 
-- `dist/BackgroundAudioRecorder-Windows.zip` — copy to any Windows PC
-- Unzip → run `install-portable.ps1` (no Python needed on target PC)
+- `dist/bgrec-Windows.zip` — copy to any Windows PC
+- Unzip → run `install-portable.cmd` — starts recording automatically and adds Windows startup (no Python needed)
 
 You can also trigger the build in the browser: **GitHub → Actions → Build Windows EXE → Run workflow**.
 
@@ -205,7 +224,7 @@ bash scripts/package-windows-release.sh
 powershell -File scripts\package-windows-release.ps1
 ```
 
-Output: `dist\BackgroundAudioRecorder-Windows.zip`
+Output: `dist\bgrec-Windows.zip`
 
 ### Install portable EXE on target PC
 
@@ -214,38 +233,40 @@ REM After unzipping the release folder:
 install-portable.cmd
 ```
 
-(`ffmpeg` is installed automatically via winget if missing.)
+The installer **starts recording in the background** and adds a **Windows startup** entry (runs again after sign-in). `ffmpeg` is installed via winget if missing.
 
-Or PowerShell:
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\install-portable.ps1
-
-# New terminal:
-bgrec login-google
-bgrec start --background
-```
+Optional later: `bgrec login-google` (Drive upload). Skip auto-start: `install-portable.cmd -NoAutoStart -SkipStartupRegistry`
 
 ## Security notes
 
-- Encryption key: `%LOCALAPPDATA%\BackgroundAudioRecorder\encryption.key` (user-only ACL best effort).
+- Encryption key: `%LOCALAPPDATA%\bgrec\encryption.key` (user-only ACL best effort).
 - When `encryption.enabled = true`, **local** copies stay as `.enc` under `recordings\encrypted\`; **Google Drive** gets normal `.mp3` / `.flac` (decrypted at upload time). Default is encryption off.
 
 ### Hearing your recordings
 
 | Where | Encryption off | Encryption on |
 |-------|----------------|---------------|
-| **This PC** | Plain `.mp3` in `recordings\` | `.enc` in `recordings\encrypted\` (use `bgrec decrypt` to play) |
+| **This PC** | Plain `.mp3` in `recordings\` | `.enc` in `recordings\encrypted\` (decrypt locally — see developer note below) |
 | **Google Drive** | Plain `.mp3` | Plain `.mp3` (play in browser or any app) |
 
-Decrypt a **local** encrypted file:
+Key file for local `.enc` only: `%LOCALAPPDATA%\bgrec\encryption.key` (Drive files are not encrypted).
+
+### Developers only — decrypt local `.enc` files
+
+The `bgrec` CLI does not expose a `decrypt` command. Use the standalone tools in the repo / release ZIP:
 
 ```cmd
-bgrec decrypt "%LOCALAPPDATA%\BackgroundAudioRecorder\recordings\encrypted\rec_20250101_120000.mp3.enc"
+decrypt-recording.cmd "%LOCALAPPDATA%\bgrec\recordings\encrypted\rec_20250101_120000.mp3.enc"
 ```
 
-Key file: `%LOCALAPPDATA%\BackgroundAudioRecorder\encryption.key` (needed for local `.enc` only; Drive files are not encrypted).
+Or from a dev checkout:
+
+```cmd
+python scripts\decrypt_recording.py "path\to\file.mp3.enc"
+python scripts\decrypt_recording.py file.mp3.enc -o playback.mp3
+```
+
+Requires `encryption.key` on the same machine that recorded the file.
 - No privilege escalation, no hidden persistence — startup is a normal user Run key.
 - Validate paths stay under configured data directories.
 
@@ -262,9 +283,9 @@ Key file: `%LOCALAPPDATA%\BackgroundAudioRecorder\encryption.key` (needed for lo
 | No audio | Check mic privacy: Settings → Privacy → Microphone |
 | FLAC/MP3 fails / pydub ffmpeg warning | Re-run `install-portable.cmd` or `install.ps1` (auto-installs ffmpeg). Manual: `winget install -e Gyan.FFmpeg`, then open a new terminal. Without ffmpeg, recordings stay WAV. |
 | Upload fails | Run `bgrec login-google`; check `logs\upload.log` |
-| `No module named typer` / `main.py` in traceback | Wrong launcher on PATH. Run `where bgrec` — use `%LOCALAPPDATA%\BackgroundAudioRecorder\bin\bgrec.exe`. Remove legacy `%LOCALAPPDATA%\BackgroundAudioRecorder\bgrec.cmd` and re-run `install-portable.cmd`, or rebuild the exe after updating PyInstaller settings. |
-| `TOMLDecodeError` at `device = null` (line 7) | Not Google OAuth — invalid TOML. Delete `device = null` from `%LOCALAPPDATA%\BackgroundAudioRecorder\config.toml` or delete the file and run `bgrec status` to recreate. Newer builds auto-repair this. |
-| `NoneType` is not TOML serializable / empty `config.toml` | Old build tried to save `device = null`. Delete `%LOCALAPPDATA%\BackgroundAudioRecorder\config.toml` and run `bgrec status`, or restore `config.toml.bak`. Rebuild `bgrec.exe` from latest source. |
+| `No module named typer` / `main.py` in traceback | Wrong launcher on PATH. Run `where bgrec` — use `%LOCALAPPDATA%\bgrec\bin\bgrec.exe`. Remove legacy `%LOCALAPPDATA%\bgrec\bgrec.cmd` and re-run `install-portable.cmd`, or rebuild the exe after updating PyInstaller settings. |
+| `TOMLDecodeError` at `device = null` (line 7) | Not Google OAuth — invalid TOML. Delete `device = null` from `%LOCALAPPDATA%\bgrec\config.toml` or delete the file and run `bgrec status` to recreate. Newer builds auto-repair this. |
+| `NoneType` is not TOML serializable / empty `config.toml` | Old build tried to save `device = null`. Delete `%LOCALAPPDATA%\bgrec\config.toml` and run `bgrec status`, or restore `config.toml.bak`. Rebuild `bgrec.exe` from latest source. |
 | Google not signed in | Recording still works; files go to `recordings\` and `cache\pending\`. Run `bgrec login-google` when ready. `bgrec status` shows Google auth state. |
 | Device disconnect | Recorder auto-retries every few seconds |
 

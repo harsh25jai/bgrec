@@ -44,5 +44,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bgrec-windows-release
-          path: dist/BackgroundAudioRecorder-Windows.zip
+          path: dist/bgrec-Windows.zip
           if-no-files-found: error

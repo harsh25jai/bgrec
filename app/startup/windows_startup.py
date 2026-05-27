@@ -10,7 +10,7 @@ from app.logging.setup import get_logger
 log = get_logger("startup")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-APP_NAME = "BackgroundAudioRecorder"
+APP_NAME = "bgrec"
 
 
 class WindowsStartupManager:
@@ -27,7 +27,7 @@ class WindowsStartupManager:
         import shutil
 
         exe = self.executable
-        if exe.name.lower() in ("bgrec.exe", "backgroundaudiorecorder.exe"):
+        if exe.name.lower() == "bgrec.exe":
             return f'"{exe}" start --background'
         bgrec = shutil.which("bgrec")
         if bgrec:

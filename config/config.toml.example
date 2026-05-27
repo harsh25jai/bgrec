@@ -1,5 +1,5 @@
-# Background Audio Recorder — sample configuration
-# Copy to: %LOCALAPPDATA%\BackgroundAudioRecorder\config.toml
+# bgrec — sample configuration
+# Copy to: %LOCALAPPDATA%\bgrec\config.toml
 # Or run `bgrec config` after first launch (auto-created).
 
 [recording]
@@ -13,6 +13,8 @@ mp3_bitrate = "64k"
 silence_detection = false
 silence_threshold_db = -40.0
 silence_min_duration_seconds = 30.0
+# Keep system awake while recording (display may still turn off). Required for recording with lid closed.
+prevent_sleep_during_recording = true
 
 [upload]
 enabled = true
@@ -40,9 +42,9 @@ backup_count = 5
 [google]
 credentials_file = "credentials.json"
 token_file = "token.json"
-app_folder_name = "BackgroundAudioRecorder"
+app_folder_name = "bgrec"
 
-# Optional path overrides (defaults under %LOCALAPPDATA%\BackgroundAudioRecorder)
+# Optional path overrides (defaults under %LOCALAPPDATA%\bgrec)
 [paths]
 # recordings = "D:\\AudioBackup\\recordings"
 # cache = "D:\\AudioBackup\\cache"

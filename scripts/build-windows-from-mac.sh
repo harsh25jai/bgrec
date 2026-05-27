@@ -68,17 +68,17 @@ if $OPEN_BROWSER; then
 fi
 
 mkdir -p "$OUT_DIR"
-rm -rf "$OUT_DIR"/BackgroundAudioRecorder-Windows "$OUT_DIR"/BackgroundAudioRecorder-Windows.zip
+rm -rf "$OUT_DIR"/bgrec-Windows "$OUT_DIR"/bgrec-Windows.zip
 gh run download "$RUN_ID" --name "$ARTIFACT_ZIP" --dir "$OUT_DIR"
 
 echo ""
 echo "==> Build complete"
-echo "    ZIP: $OUT_DIR/BackgroundAudioRecorder-Windows.zip"
-if [[ -f "$OUT_DIR/BackgroundAudioRecorder-Windows.zip" ]]; then
-  unzip -q -o "$OUT_DIR/BackgroundAudioRecorder-Windows.zip" -d "$OUT_DIR/BackgroundAudioRecorder-Windows"
-  echo "    Folder: $OUT_DIR/BackgroundAudioRecorder-Windows/"
+echo "    ZIP: $OUT_DIR/bgrec-Windows.zip"
+if [[ -f "$OUT_DIR/bgrec-Windows.zip" ]]; then
+  unzip -q -o "$OUT_DIR/bgrec-Windows.zip" -d "$OUT_DIR/bgrec-Windows"
+  echo "    Folder: $OUT_DIR/bgrec-Windows/"
   echo ""
-  echo "Copy BackgroundAudioRecorder-Windows.zip to the target PC, unzip, and run:"
+  echo "Copy bgrec-Windows.zip to the target PC, unzip, and run:"
   echo "  .\\install-portable.ps1"
 else
   echo "    (Downloaded artifact contents are in $OUT_DIR)"

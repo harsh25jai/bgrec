@@ -1,4 +1,4 @@
-# Background Audio Recorder — Python 3.11+
+# bgrec — Python 3.11+
 # Cross-platform deps (install on any OS for editing; app runs on Windows only)
 
 sounddevice>=0.5.0

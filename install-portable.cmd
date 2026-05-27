@@ -4,6 +4,7 @@ REM Delegates to install-portable.ps1 with execution policy bypass.
 REM
 REM   install-portable.cmd
 REM   install-portable.cmd -SkipFfmpeg
+REM   install-portable.cmd -NoAutoStart -SkipStartupRegistry
 
 setlocal EnableExtensions
 cd /d "%~dp0"

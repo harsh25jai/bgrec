@@ -5,8 +5,8 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path $PSScriptRoot -Parent
 $Dist = Join-Path $Root "dist"
 $Exe = Join-Path $Dist "bgrec.exe"
-$ReleaseDir = Join-Path $Dist "BackgroundAudioRecorder-Windows"
-$ZipPath = Join-Path $Dist "BackgroundAudioRecorder-Windows.zip"
+$ReleaseDir = Join-Path $Dist "bgrec-Windows"
+$ZipPath = Join-Path $Dist "bgrec-Windows.zip"
 
 if (-not (Test-Path $Exe)) {
     throw "Missing $Exe — run: python scripts\build_exe.py"
@@ -26,10 +26,10 @@ Copy-Item (Join-Path $Root "scripts\decrypt_recording.py") $ReleaseDir
 Copy-Item (Join-Path $Root "decrypt-recording.cmd") $ReleaseDir
 
 @"
-Background Audio Recorder — portable install
-============================================
+bgrec — portable install
+========================
 
-1. Unzip this folder anywhere (e.g. Desktop\BackgroundAudioRecorder).
+1. Unzip this folder anywhere (e.g. Desktop\bgrec).
 2. Open Command Prompt here and run:
 
    install-portable.cmd
@@ -39,7 +39,7 @@ Background Audio Recorder — portable install
    .\install-portable.ps1
 
 3. Place Google OAuth credentials.json in:
-   %LOCALAPPDATA%\BackgroundAudioRecorder\credentials\credentials.json
+   %LOCALAPPDATA%\bgrec\credentials\credentials.json
 
 4. Open a NEW terminal (PATH refresh) and run:
 

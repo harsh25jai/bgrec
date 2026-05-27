@@ -24,8 +24,10 @@ class PendingUpload:
 class DaemonState:
     pid: int | None = None
     running: bool = False
+    daemon_executable: str | None = None
     started_at: float | None = None
     last_chunk_at: float | None = None
+    last_heartbeat_at: float | None = None
     chunks_recorded: int = 0
     pending_uploads: list[PendingUpload] = field(default_factory=list)
 

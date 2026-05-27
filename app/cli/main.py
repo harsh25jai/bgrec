@@ -1,9 +1,10 @@
-"""Command-line interface for Background Audio Recorder."""
+"""Command-line interface for bgrec."""
 
 from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -21,18 +22,27 @@ from app.config.settings import (
     load_config,
     save_config,
 )
-from app.crypto.encryption import EncryptionManager
 from app.logging.setup import configure_logging, get_logger
 from app.recorder.audio_recorder import list_input_devices
 from app.scheduler.coordinator import ServiceCoordinator
-from app.service.daemon import is_process_running, run_foreground, spawn_background, state_path, stop_daemon
+from app.service.daemon import (
+    StopResult,
+    is_bgrec_process,
+    is_daemon_active,
+    is_process_running,
+    reconcile_daemon_state,
+    run_foreground,
+    spawn_background,
+    state_path,
+    stop_daemon,
+)
 from app.service.state import DaemonState
 from app.startup.windows_startup import WindowsStartupManager
 from app.uploader.drive_client import DriveClient
 
 app = typer.Typer(
     name="bgrec",
-    help="Background Audio Recorder — user-consented microphone capture with encrypted Google Drive backup.",
+    help="bgrec — user-consented microphone capture with encrypted Google Drive backup.",
     no_args_is_help=True,
 )
 console = Console()
@@ -53,14 +63,36 @@ def start(
     paths = cfg.ensure_directories()
     configure_logging(paths["logs"], level=cfg.logging.level)
 
-    state = DaemonState.load(state_path())
-    if state.running and state.pid and is_process_running(state.pid):
+    spath = state_path()
+    state = reconcile_daemon_state(DaemonState.load(spath), spath)
+    if is_daemon_active(state):
         console.print(f"[yellow]Already running (pid={state.pid})[/yellow]")
         raise typer.Exit(0)
 
+    # Orphan: bgrec process without mutex / stale state after a crash
+    if (
+        state.pid
+        and is_process_running(state.pid)
+        and is_bgrec_process(state.pid, state.daemon_executable)
+    ):
+        console.print(f"[dim]Cleaning up orphan process (pid={state.pid})…[/dim]")
+        stop_daemon()
+        time.sleep(1.0)
+        state = reconcile_daemon_state(DaemonState.load(spath), spath)
+
     if background and not foreground:
-        pid = spawn_background()
-        console.print(f"[green]Started background process (pid={pid})[/green]")
+        spawn_background()
+        time.sleep(2.0)
+        state = reconcile_daemon_state(DaemonState.load(spath), spath)
+        if is_daemon_active(state):
+            console.print(f"[green]Started background daemon (pid={state.pid})[/green]")
+        else:
+            console.print(
+                "[red]Failed to start daemon.[/red] Check logs in "
+                f"{_load().ensure_directories()['logs']} "
+                "(especially daemon-spawn.log and bgrec.log)."
+            )
+            raise typer.Exit(1)
         return
 
     def factory():
@@ -70,12 +102,34 @@ def start(
 
 
 @app.command()
+def restart(
+    background: bool = typer.Option(True, "--background/--foreground", help="Restart detached."),
+) -> None:
+    """Stop the daemon if running, then start it again."""
+    stop_daemon()
+    time.sleep(1.0)
+    if background:
+        start(background=True, foreground=False)
+    else:
+        start(background=False, foreground=False)
+
+
+@app.command()
 def stop() -> None:
     """Stop the background recording service."""
-    if stop_daemon():
+    result = stop_daemon()
+    if result == StopResult.STOPPED:
         console.print("[green]Service stopped[/green]")
+    elif result == StopResult.FAILED:
+        state = DaemonState.load(state_path())
+        console.print(
+            f"[red]Could not stop process (pid={state.pid}).[/red] "
+            "Try closing it in Task Manager or run as admin: "
+            f"taskkill /PID {state.pid} /F"
+        )
+        raise typer.Exit(1)
     else:
-        console.print("[yellow]Service was not running[/yellow]")
+        console.print("[yellow]Service was not running (stale state cleared if needed)[/yellow]")
 
 
 @app.command()
@@ -83,7 +137,8 @@ def status() -> None:
     """Show service status."""
     cfg = _load()
     paths = cfg.ensure_directories()
-    state = DaemonState.load(paths["root"] / "state.json")
+    spath = paths["root"] / "state.json"
+    state = reconcile_daemon_state(DaemonState.load(spath), spath)
 
     drive = DriveClient(
         paths["credentials"],
@@ -93,13 +148,18 @@ def status() -> None:
     )
     auth_key, auth_msg = drive.google_auth_status()
 
-    table = Table(title="Background Audio Recorder")
+    table = Table(title="bgrec")
     table.add_column("Field", style="cyan")
     table.add_column("Value")
 
-    alive = state.pid and is_process_running(state.pid) if state.pid else False
-    table.add_row("Running", str(alive and state.running))
+    active = is_daemon_active(state)
+    table.add_row("Running", "yes" if active else "no")
     table.add_row("PID", str(state.pid or "—"))
+    if state.last_chunk_at:
+        ago = int(time.time() - state.last_chunk_at)
+        table.add_row("Last chunk", f"{ago}s ago")
+    else:
+        table.add_row("Last chunk", "never")
     table.add_row("Chunks recorded", str(state.chunks_recorded))
     table.add_row("Pending uploads", str(len(state.pending_uploads)))
     table.add_row("Config", str(default_config_path()))
@@ -107,6 +167,10 @@ def status() -> None:
     table.add_row("Upload queue (cache)", str(paths["pending_uploads"]))
     table.add_row("Encryption", "enabled" if cfg.encryption.enabled else "disabled")
     table.add_row("Upload", "enabled" if cfg.upload.enabled else "disabled")
+    table.add_row(
+        "Sleep inhibition",
+        "on" if cfg.recording.prevent_sleep_during_recording else "off",
+    )
     if auth_key == "authenticated":
         table.add_row("Google auth", f"[green]{auth_msg}[/green]")
     else:
@@ -211,38 +275,6 @@ def delete_local_cache(
     paths = cfg.ensure_directories()
     n = RetentionManager(cfg, paths).delete_local_cache()
     console.print(f"[green]Removed {n} cached file(s)[/green]")
-
-
-@app.command("decrypt")
-def decrypt(
-    encrypted: Path = typer.Argument(..., help="Path to a .enc file (local or downloaded from Drive)."),
-    output: Optional[Path] = typer.Option(
-        None, "--output", "-o", help="Output audio path (default: strip .enc → e.g. rec_20250101.flac)"
-    ),
-) -> None:
-    """Decrypt a recording using your local encryption.key (then play with any media player)."""
-    cfg = _load()
-    paths = cfg.ensure_directories()
-    enc_path = encrypted.expanduser().resolve()
-    if not enc_path.is_file():
-        console.print(f"[red]File not found:[/red] {enc_path}")
-        raise typer.Exit(1)
-    if enc_path.suffix != ".enc":
-        console.print("[yellow]Warning: file does not end with .enc[/yellow]")
-
-    out_path = output or enc_path.with_suffix("")
-    key_path = paths["root"] / "encryption.key"
-    if not key_path.exists():
-        console.print(
-            f"[red]Missing encryption key:[/red] {key_path}\n"
-            "You need the same PC/key that encrypted this file."
-        )
-        raise typer.Exit(1)
-
-    mgr = EncryptionManager(key_path, enabled=True)
-    mgr.decrypt_file(enc_path, out_path)
-    console.print(f"[green]Decrypted to:[/green] {out_path}")
-    console.print("Open that file in VLC, Windows Media Player, etc.")
 
 
 @app.command("list-devices")
