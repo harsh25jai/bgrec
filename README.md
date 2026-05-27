@@ -202,6 +202,23 @@ Output:
 
 You can also trigger the build in the browser: **GitHub → Actions → Build Windows EXE → Run workflow**.
 
+### Test branch builds (no GitHub Release)
+
+Push to the **`test`** branch (or run **Actions → Build Windows EXE (test)**). CI produces artifact **`bgrec-windows-test`** (`bgrec-Windows-test.zip`) — not a Release, for QA installs only.
+
+```bash
+git checkout test
+git push origin test
+
+# Or from Mac, push test and download the artifact:
+chmod +x scripts/build-windows-test-from-mac.sh
+./scripts/build-windows-test-from-mac.sh
+```
+
+On the Windows PC: download the artifact from the workflow run → unzip → `install-portable.cmd`. The ZIP includes `BUILD_INFO.txt` and `INSTALL-TEST.txt`.
+
+Production OTA (future) will use **main** + GitHub Releases only.
+
 ### Build on Windows (local)
 
 ```cmd
