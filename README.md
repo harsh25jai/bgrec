@@ -230,34 +230,22 @@ bgrec start --background
 ## Security notes
 
 - Encryption key: `%LOCALAPPDATA%\BackgroundAudioRecorder\encryption.key` (user-only ACL best effort).
-- When `encryption.enabled = true`, only `.enc` files are queued for upload. Default is **plain MP3** on Drive.
+- When `encryption.enabled = true`, **local** copies stay as `.enc` under `recordings\encrypted\`; **Google Drive** gets normal `.mp3` / `.flac` (decrypted at upload time). Default is encryption off.
 
 ### Hearing your recordings
 
-| Where | What you have | How to play |
-|-------|----------------|-------------|
-| **Encryption off** (`[encryption] enabled = false`) | Plain `.flac` / `.mp3` on Drive and in `recordings\` | Open directly in any player |
-| **Encryption on** (default) | `.enc` on Drive and in `cache\pending\` | Decrypt on the PC that has `encryption.key`, then play |
+| Where | Encryption off | Encryption on |
+|-------|----------------|---------------|
+| **This PC** | Plain `.mp3` in `recordings\` | `.enc` in `recordings\encrypted\` (use `bgrec decrypt` to play) |
+| **Google Drive** | Plain `.mp3` | Plain `.mp3` (play in browser or any app) |
 
-Decrypt one file (after downloading from Google Drive or from the pending cache):
-
-```cmd
-bgrec decrypt "C:\path\to\rec_20250101_120000.flac.enc"
-bgrec decrypt "C:\path\to\file.flac.enc" -o C:\temp\playback.flac
-```
-
-If `bgrec decrypt` is not found (old `bgrec.exe`), use either:
+Decrypt a **local** encrypted file:
 
 ```cmd
-python -m app.cli.main decrypt "C:\path\to\file.flac.enc"
-python scripts\decrypt_recording.py "C:\path\to\file.flac.enc"
+bgrec decrypt "%LOCALAPPDATA%\BackgroundAudioRecorder\recordings\encrypted\rec_20250101_120000.mp3.enc"
 ```
 
-Or rebuild: `python scripts\build_exe.py` then reinstall.
-
-Key file (keep safe — without it `.enc` files cannot be opened):
-
-`%LOCALAPPDATA%\BackgroundAudioRecorder\encryption.key`
+Key file: `%LOCALAPPDATA%\BackgroundAudioRecorder\encryption.key` (needed for local `.enc` only; Drive files are not encrypted).
 - No privilege escalation, no hidden persistence — startup is a normal user Run key.
 - Validate paths stay under configured data directories.
 

@@ -174,15 +174,27 @@ def list_recordings(
     """List local recording files."""
     cfg = _load()
     paths = cfg.ensure_directories()
-    files = sorted(paths["recordings"].glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
     table = Table(title="Local Recordings")
     table.add_column("Name")
     table.add_column("Size (KB)")
     table.add_column("Modified")
-    for f in files[:limit]:
-        if f.is_file():
-            stat = f.stat()
-            table.add_row(f.name, f"{stat.st_size / 1024:.1f}", str(stat.st_mtime))
+    table.add_column("Location")
+    shown = 0
+    sources = [paths["recordings"], paths["recordings"] / "encrypted"]
+    all_files: list[tuple[Path, str]] = []
+    for base in sources:
+        if not base.exists():
+            continue
+        label = "encrypted" if base.name == "encrypted" else "plain"
+        for f in base.iterdir():
+            if f.is_file():
+                all_files.append((f, label))
+    for f, label in sorted(all_files, key=lambda x: x[0].stat().st_mtime, reverse=True)[:limit]:
+        stat = f.stat()
+        table.add_row(f.name, f"{stat.st_size / 1024:.1f}", str(stat.st_mtime), label)
+        shown += 1
+    if shown == 0:
+        console.print("[dim]No local recording files yet.[/dim]")
     console.print(table)
 
 

@@ -113,7 +113,11 @@ class AppConfig:
         paths = self.resolve_paths()
         for p in paths.values():
             p.mkdir(parents=True, exist_ok=True)
-        (paths["pending_uploads"]).mkdir(parents=True, exist_ok=True)
+        paths["pending_uploads"].mkdir(parents=True, exist_ok=True)
+        paths["encrypted_local"] = paths["recordings"] / "encrypted"
+        paths["encrypted_local"].mkdir(parents=True, exist_ok=True)
+        paths["upload_temp"] = paths["cache"] / "upload_temp"
+        paths["upload_temp"].mkdir(parents=True, exist_ok=True)
         return paths
 
 
