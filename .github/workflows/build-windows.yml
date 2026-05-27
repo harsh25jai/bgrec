@@ -33,6 +33,7 @@ jobs:
       tag: ${{ steps.ver.outputs.tag }}
       version: ${{ steps.ver.outputs.version }}
       did_push: ${{ steps.sync.outputs.did_push }}
+      commit_sha: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,15 +107,25 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout tag
+      # Build the commit that triggered this workflow (not an old tag pointer).
+      # Retries use current main; tag vX.Y.Z is attached to this same SHA in the tag job.
+      - name: Checkout release commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.tag.outputs.tag }}
+          ref: ${{ needs.tag.outputs.commit_sha }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Verify checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/sync_version_from_pyproject.py
+          test -f scripts/build_exe.py
+          echo "Building commit $(git rev-parse HEAD) for ${{ needs.tag.outputs.tag }}"
 
       - name: Sync app/version.py from pyproject.toml
         shell: bash
