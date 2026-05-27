@@ -1,0 +1,48 @@
+# Build Windows bgrec.exe + portable ZIP (runs on Microsoft-hosted Windows).
+# Trigger from Mac: ./scripts/build-windows-from-mac.sh
+
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-windows.txt
+          pip install -e .
+
+      - name: Build executable
+        run: python scripts/build_exe.py
+
+      - name: Package release ZIP
+        shell: pwsh
+        run: ./scripts/package-windows-release.ps1
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: bgrec-exe
+          path: dist/bgrec.exe
+          if-no-files-found: error
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: bgrec-windows-release
+          path: dist/BackgroundAudioRecorder-Windows.zip
+          if-no-files-found: error
