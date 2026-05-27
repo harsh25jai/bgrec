@@ -53,6 +53,16 @@ if ((Test-Path $exampleConfig) -and -not (Test-Path $configPath)) {
     Copy-Item $exampleConfig $configPath
 }
 
+$bundledRepo = Join-Path $PackageRoot "github-repo.txt"
+if (Test-Path $bundledRepo) {
+    $repo = (Get-Content $bundledRepo -Raw).Trim()
+    if ($repo -and $repo -notmatch "YOUR_GITHUB" -and $repo.Contains("/")) {
+        & $TargetExe config migrate 2>$null
+        & $TargetExe config --key update.github_repo --value $repo 2>$null
+        Write-Host "OTA: github_repo=$repo" -ForegroundColor DarkGray
+    }
+}
+
 # Legacy install.ps1 drops bgrec.cmd in data dir; that wins over bin\bgrec.exe on PATH.
 foreach ($dataDir in @($InstallDir, (Join-Path $env:LOCALAPPDATA "BackgroundAudioRecorder"))) {
     $legacyCmd = Join-Path $dataDir "bgrec.cmd"

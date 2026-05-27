@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +44,16 @@ HIDDEN_IMPORTS = [
     "httplib2",
     "uritemplate",
     "tomli_w",
+    "packaging",
+    "app.version",
+    "app.config.migrate",
+    "app.updater.manifest",
+    "app.updater.download",
+    "app.updater.verify",
+    "app.updater.apply",
+    "app.updater.service",
+    "app.updater.bundled",
+    "app.updater.scheduler",
 ]
 
 # collect-all bundles package data; avoid copy-metadata (often breaks on Windows).
@@ -97,6 +108,11 @@ def pyinstaller_command() -> list[str]:
         cmd.append(f"--hidden-import={mod}")
     for pkg in COLLECT_ALL:
         cmd.append(f"--collect-all={pkg}")
+    sep = os.pathsep
+    for name in ("config.toml.example", "schema-version.txt", "github-repo.txt"):
+        src = ROOT / "config" / name
+        if src.exists():
+            cmd.append(f"--add-data={src}{sep}config")
     cmd.append(str(ENTRY))
     return cmd
 
