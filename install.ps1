@@ -73,11 +73,11 @@ function Ensure-Python {
     if ($py) {
         $version = & python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
         $major, $minor = $version.Split(".")
-        if ([int]$major -ge 3 -and [int]$minor -ge 12) {
+        if ([int]$major -gt 3 -or ([int]$major -eq 3 -and [int]$minor -ge 11)) {
             Write-Host "Python $version OK." -ForegroundColor Green
             return
         }
-        Write-Host "Python $version found but 3.12+ required." -ForegroundColor Yellow
+        Write-Host "Python $version found but 3.11+ required." -ForegroundColor Yellow
     }
 
     if ($InstallPython) {
@@ -89,7 +89,7 @@ function Ensure-Python {
     }
 
     throw @"
-Python 3.12+ not found.
+Python 3.11+ not found.
 
 Option A — install manually: https://www.python.org/downloads/ (check 'Add to PATH')
 Option B — re-run with:  .\install.ps1 -InstallPython
