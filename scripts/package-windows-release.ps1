@@ -17,6 +17,7 @@ New-Item -ItemType Directory -Path $ReleaseDir | Out-Null
 
 Copy-Item $Exe $ReleaseDir
 Copy-Item (Join-Path $Root "install-portable.ps1") $ReleaseDir
+Copy-Item (Join-Path $Root "install-portable.cmd") $ReleaseDir
 Copy-Item (Join-Path $Root "uninstall.ps1") $ReleaseDir
 Copy-Item (Join-Path $Root "config\config.toml.example") $ReleaseDir
 Copy-Item (Join-Path $Root "README.md") $ReleaseDir
@@ -26,8 +27,11 @@ Background Audio Recorder — portable install
 ============================================
 
 1. Unzip this folder anywhere (e.g. Desktop\BackgroundAudioRecorder).
-2. Open PowerShell here and run:
+2. Open Command Prompt here and run:
 
+   install-portable.cmd
+
+   Or in PowerShell:
    Set-ExecutionPolicy -Scope Process Bypass
    .\install-portable.ps1
 
