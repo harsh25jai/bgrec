@@ -12,10 +12,24 @@ from pathlib import Path
 
 from app.config.migrate import merge_config_defaults
 from app.config.settings import default_config_path, default_data_dirs
+from app.install.portable import (
+    bin_exe_path,
+    is_running_installed_binary,
+    portable_install_exists,
+    preferred_bgrec_executable,
+    wrong_executable_hint,
+)
 from app.logging.setup import get_logger
 from app.service.daemon import StopResult, stop_daemon
 from app.updater.download import download_file
 from app.updater.manifest import ReleaseManifest
+from app.updater.ota_state import (
+    acquire_apply_lock,
+    clear_apply_failure,
+    is_apply_in_progress,
+    record_apply_failure,
+    release_apply_lock,
+)
 from app.updater.verify import verify_sha256, verify_size
 
 log = get_logger("updater.apply")
@@ -35,22 +49,19 @@ def updates_root() -> Path:
     return default_data_dirs()["root"] / "updates"
 
 
-def bin_exe_path() -> Path:
-    return default_data_dirs()["root"] / "bin" / "bgrec.exe"
-
-
 def is_ota_target_install() -> bool:
-    """True when this process can replace the installed portable binary."""
+    """True when the portable install layout exists under %LOCALAPPDATA%\\bgrec\\bin."""
     if sys.platform != "win32":
         return False
-    exe = Path(sys.executable).resolve()
-    if getattr(sys, "frozen", False):
+    if portable_install_exists():
         return True
+    if getattr(sys, "frozen", False):
+        return False
     expected = bin_exe_path()
     try:
-        return exe == expected.resolve()
+        return Path(sys.executable).resolve() == expected.resolve()
     except OSError:
-        return expected.exists() and exe.name.lower() == "bgrec.exe"
+        return expected.exists() and Path(sys.executable).name.lower() == "bgrec.exe"
 
 
 def write_current_meta(version: str, config_schema_version: int) -> None:
@@ -99,8 +110,15 @@ def apply_update(
     if manifest.channel == "test":
         return ApplyResult(False, "Refusing to apply test-channel manifest on stable install.")
 
+    if is_apply_in_progress():
+        return ApplyResult(False, "Another OTA apply is already in progress.")
+
+    if not acquire_apply_lock():
+        return ApplyResult(False, "Could not acquire OTA apply lock.")
+
     stop = stop_daemon()
     if stop == StopResult.FAILED:
+        release_apply_lock()
         if not force:
             return ApplyResult(
                 False,
@@ -150,21 +168,29 @@ def apply_update(
             log.info("Config migrate: {} keys added", len(merge.keys_added))
 
         write_current_meta(manifest.version, manifest.config_schema_version)
+        clear_apply_failure()
 
         if restart:
             from app.service.daemon import spawn_background
 
             spawn_background()
 
+        message = f"Updated to {manifest.version} at {bin_exe}"
+        hint = wrong_executable_hint()
+        if hint:
+            message = f"{message}\n{hint}"
         return ApplyResult(
             True,
-            f"Updated to {manifest.version}",
+            message,
             installed_version=manifest.version,
             backup_exe=backup if backup.exists() else None,
         )
     except Exception as exc:
         log.exception("OTA apply failed: {}", exc)
+        record_apply_failure(manifest.version, str(exc))
         backup = bin_exe_path().with_name("bgrec.exe.bak")
         if backup.exists() and not bin_exe_path().exists():
             shutil.copy2(backup, bin_exe_path())
         return ApplyResult(False, str(exc))
+    finally:
+        release_apply_lock()

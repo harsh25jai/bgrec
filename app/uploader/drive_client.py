@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -32,6 +33,7 @@ class DriveClient:
         self.app_folder_name = app_folder_name
         self._service = None
         self._folder_id: str | None = None
+        self._auth_lock = threading.Lock()
 
     def is_configured(self) -> bool:
         return self.credentials_path.exists()
@@ -68,28 +70,50 @@ class DriveClient:
         )
 
     def authenticate(self, interactive: bool = True) -> Credentials:
-        creds: Credentials | None = None
-        if self.token_path.exists():
-            creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+        with self._auth_lock:
+            if self._service is not None:
+                creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+                if creds and (creds.valid or creds.refresh_token):
+                    return creds
 
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        elif not creds or not creds.valid:
-            if not self.credentials_path.exists():
-                raise FileNotFoundError(
-                    f"Place OAuth client credentials at: {self.credentials_path}\n"
-                    "Download from Google Cloud Console (Desktop app)."
+            creds: Credentials | None = None
+            if self.token_path.exists():
+                creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            elif not creds or not creds.valid:
+                if not self.credentials_path.exists():
+                    raise FileNotFoundError(
+                        f"Place OAuth client credentials at: {self.credentials_path}\n"
+                        "Download from Google Cloud Console (Desktop app)."
+                    )
+                if not interactive:
+                    raise RuntimeError("Google credentials invalid; run login-google interactively")
+                flow = InstalledAppFlow.from_client_secrets_file(str(self.credentials_path), SCOPES)
+                creds = flow.run_local_server(port=0)
+                self.token_path.parent.mkdir(parents=True, exist_ok=True)
+                self.token_path.write_text(creds.to_json(), encoding="utf-8")
+                log.info("Google OAuth token saved")
+
+            try:
+                self._service = build(
+                    "drive",
+                    "v3",
+                    credentials=creds,
+                    cache_discovery=False,
+                    static_discovery=True,
                 )
-            if not interactive:
-                raise RuntimeError("Google credentials invalid; run login-google interactively")
-            flow = InstalledAppFlow.from_client_secrets_file(str(self.credentials_path), SCOPES)
-            creds = flow.run_local_server(port=0)
-            self.token_path.parent.mkdir(parents=True, exist_ok=True)
-            self.token_path.write_text(creds.to_json(), encoding="utf-8")
-            log.info("Google OAuth token saved")
-
-        self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
-        return creds
+            except Exception as exc:
+                msg = str(exc).strip()
+                if "name:" in msg and "version:" in msg and "drive" in msg.lower():
+                    raise RuntimeError(
+                        "Google Drive API discovery failed in this build "
+                        "(missing API metadata in frozen exe). Reinstall from a newer "
+                        "bgrec-Windows.zip or run: bgrec login-google after update."
+                    ) from exc
+                raise
+            return creds
 
     @property
     def service(self):

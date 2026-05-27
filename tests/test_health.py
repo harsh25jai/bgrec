@@ -62,3 +62,30 @@ def test_format_issues_for_status() -> None:
     text = format_issues_for_status(issues)
     assert "tls:" in text
     assert format_issues_for_status(()) == "none"
+
+
+def test_assess_health_drops_stale_google_auth_when_signed_in() -> None:
+    cfg = _minimal_config()
+    state = DaemonState(
+        running=True,
+        pid=1,
+        started_at=time.time() - 10,
+        last_chunk_at=time.time() - 30,
+        issues=[HealthIssue(code="google_auth", message="Not signed in")],
+    )
+    report = assess_health(
+        cfg,
+        state,
+        daemon_active=True,
+        auth_key="authenticated",
+        auth_msg="Signed in",
+    )
+    codes = {i.code for i in report.issues}
+    assert "google_auth" not in codes
+
+
+def test_upload_error_issue_code_discovery_is_upload() -> None:
+    from app.uploader.upload_queue import UploadQueue
+
+    msg = "Google Drive API discovery failed (missing API metadata)"
+    assert UploadQueue._issue_code_for_upload_error(msg) == "upload"

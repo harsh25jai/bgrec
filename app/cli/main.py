@@ -16,7 +16,7 @@ from app.platform_check import require_windows
 
 require_windows()
 
-from app.runtime_bootstrap import bootstrap_runtime
+from app.runtime_bootstrap import bootstrap_runtime, ssl_certificate_status
 
 bootstrap_runtime()
 
@@ -29,6 +29,7 @@ from app.config.settings import (
 from app.logging.setup import configure_logging, get_logger
 from app.recorder.audio_recorder import list_input_devices
 from app.scheduler.coordinator import ServiceCoordinator
+from app.service.singleton import is_daemon_lock_held
 from app.service.daemon import (
     StopResult,
     is_bgrec_process,
@@ -39,6 +40,7 @@ from app.service.daemon import (
     spawn_background,
     state_path,
     stop_daemon,
+    wait_for_daemon_active,
 )
 from app.service.state import DaemonState
 from app.startup.windows_startup import WindowsStartupManager
@@ -48,6 +50,17 @@ from app.config.migrate import load_config_meta
 from app.updater.apply import apply_update, is_ota_target_install, read_current_meta, rollback_exe
 from app.updater.service import check_for_updates, ensure_update_repo, try_auto_apply
 from app.health.report import assess_health, format_issues_for_status
+from app.health.state_issues import (
+    ISSUES_CLEARED_AFTER_GOOGLE_LOGIN,
+    clear_persisted_health_issues,
+)
+from app.install.portable import (
+    bin_exe_path,
+    get_portable_bin_version,
+    is_running_installed_binary,
+    portable_install_exists,
+    wrong_executable_hint,
+)
 from app.version import get_version
 
 app = typer.Typer(
@@ -92,15 +105,19 @@ def start(
 
     if background and not foreground:
         spawn_background()
-        time.sleep(2.0)
-        state = reconcile_daemon_state(DaemonState.load(spath), spath)
-        if is_daemon_active(state):
+        state = wait_for_daemon_active(timeout=25.0)
+        if state:
             console.print(f"[green]Started background daemon (pid={state.pid})[/green]")
+        elif is_daemon_lock_held():
+            console.print(
+                "[yellow]Daemon is still starting (PyInstaller may take 10–20s).[/yellow]\n"
+                "Check: bgrec status"
+            )
         else:
             console.print(
                 "[red]Failed to start daemon.[/red] Check logs in "
-                f"{_load().ensure_directories()['logs']} "
-                "(especially daemon-spawn.log and bgrec.log)."
+                f"{paths['logs']} (daemon-spawn.log, bgrec.log).\n"
+                "[dim]PYI temp-dir warnings on spawn are usually harmless.[/dim]"
             )
             raise typer.Exit(1)
         return
@@ -195,8 +212,20 @@ def status() -> None:
     else:
         table.add_row("Google auth", f"[yellow]{auth_msg}[/yellow]")
     table.add_row("Startup registry", str(WindowsStartupManager().is_enabled()))
-    table.add_row("App version", get_version())
+    service_ver = get_portable_bin_version()
+    if service_ver and not is_running_installed_binary():
+        table.add_row("App version (service)", service_ver)
+        table.add_row("CLI version (this exe)", get_version())
+        hint = wrong_executable_hint()
+        if hint:
+            table.add_row("Note", f"[yellow]{hint}[/yellow]")
+    else:
+        table.add_row("App version", service_ver or get_version())
     table.add_row("OTA auto-apply", "on" if cfg.update.auto_apply else "off")
+    if cfg.update.enabled and cfg.update.auto_apply:
+        table.add_row("OTA check interval", f"{cfg.update.check_interval_hours}h (also on each daemon start)")
+    elif cfg.update.enabled:
+        table.add_row("OTA check interval", f"{cfg.update.check_interval_hours}h (apply manual: bgrec update --yes)")
     ota_meta = read_current_meta()
     if ota_meta.get("version"):
         table.add_row("Last OTA version", str(ota_meta.get("version")))
@@ -212,24 +241,43 @@ def version(
         "--check-update",
         help="Query GitHub for a newer release (same as bgrec update --check).",
     ),
+    porcelain: bool = typer.Option(
+        False,
+        "--porcelain",
+        help="Print only the version of this executable (for scripts).",
+    ),
 ) -> None:
     """Show installed version and OTA status."""
+    if porcelain:
+        console.print(get_version())
+        return
+
     cfg = _load()
     paths = cfg.ensure_directories()
     meta = load_config_meta(paths["root"])
     ota = read_current_meta()
+    service_ver = get_portable_bin_version()
 
     table = Table(title="bgrec version")
     table.add_column("Field", style="cyan")
     table.add_column("Value")
-    table.add_row("Installed", get_version())
+    if service_ver and not is_running_installed_binary():
+        table.add_row("Service binary", f"[green]{service_ver}[/green] ({bin_exe_path()})")
+        table.add_row("This command", f"{get_version()} ({sys.executable})")
+    else:
+        table.add_row("Installed", get_version())
     table.add_row("Config schema", str(get_config_schema_version()))
     table.add_row("OTA capable", "yes" if is_ota_target_install() else "no (dev/git install)")
     if ota.get("version"):
         table.add_row("Last OTA apply", str(ota.get("version")))
     if meta.get("last_merged_at"):
         table.add_row("Config last merged", str(int(meta["last_merged_at"])))
-    table.add_row("Executable", sys.executable)
+    if not is_running_installed_binary() and service_ver:
+        hint = wrong_executable_hint()
+        if hint:
+            table.add_row("Note", f"[yellow]{hint}[/yellow]")
+    else:
+        table.add_row("Executable", sys.executable)
     console.print(table)
 
     if check_update:
@@ -300,17 +348,21 @@ def update(
         typer.confirm(f"Download and install {result.manifest.version}?", abort=True)
 
     if unattended:
-        if try_auto_apply(cfg, result, unattended=True):
+        if try_auto_apply(cfg, result, unattended=True, force=force):
             raise typer.Exit(0)
         raise typer.Exit(1)
 
     console.print(f"[cyan]Applying update {result.manifest.version}…[/cyan]")
     applied = apply_update(result.manifest, force=force, restart=True)
     if applied.success:
-        console.print(f"[green]{applied.message}[/green]")
+        lines = applied.message.splitlines()
+        console.print(f"[green]{lines[0]}[/green]")
+        for line in lines[1:]:
+            console.print(f"[yellow]{line}[/yellow]")
         if applied.backup_exe:
             console.print(f"[dim]Backup: {applied.backup_exe}[/dim]")
-        console.print("[dim]Verify: bgrec version --check-update[/dim]")
+        verify = bin_exe_path() if portable_install_exists() else Path(sys.executable)
+        console.print(f'[dim]Verify: "{verify}" version[/dim]')
     else:
         console.print(f"[red]{applied.message}[/red]")
         raise typer.Exit(1)
@@ -335,6 +387,24 @@ def _print_update_check(cfg: AppConfig | None = None, result=None) -> None:
         console.print(f"[dim]Manifest: {result.manifest_url}[/dim]")
 
 
+@app.command("doctor")
+def doctor() -> None:
+    """Verify bundled runtime prerequisites (discovery docs, TLS). Used after build."""
+    from googleapiclient.discovery_cache import get_static_doc
+
+    doc = get_static_doc("drive", "v3")
+    if not doc:
+        console.print("[red]Drive API discovery document missing in this build[/red]")
+        raise typer.Exit(1)
+
+    tls_ok, tls_msg = ssl_certificate_status()
+    if not tls_ok:
+        console.print(f"[red]TLS:[/red] {tls_msg}")
+        raise typer.Exit(1)
+
+    console.print("[green]OK[/green] Drive discovery and TLS certificate bundle")
+
+
 @app.command("login-google")
 def login_google() -> None:
     """Run Google OAuth desktop flow and save token."""
@@ -355,6 +425,8 @@ def login_google() -> None:
         raise typer.Exit(1)
     drive.authenticate(interactive=True)
     drive.ensure_app_folder()
+    if clear_persisted_health_issues(*ISSUES_CLEARED_AFTER_GOOGLE_LOGIN):
+        console.print("[dim]Cleared stale health issues from daemon state[/dim]")
     console.print("[green]Google Drive authenticated successfully[/green]")
 
 
@@ -371,6 +443,12 @@ config_app = typer.Typer(help="View or update configuration.")
 app.add_typer(config_app, name="config")
 
 
+@config_app.command("show")
+def config_show() -> None:
+    """Show current config.toml (same as `bgrec config`)."""
+    console.print_json(json.dumps(_config_display(_load())))
+
+
 @config_app.callback(invoke_without_command=True)
 def config_cmd(
     ctx: typer.Context,
@@ -385,8 +463,9 @@ def config_cmd(
     if key and value is not None:
         _set_nested(cfg, key, _parse_value(value))
         path = save_config(cfg)
-        if cfg.startup.enabled:
-            WindowsStartupManager().enable()
+        # Only touch the Run key when startup settings change (not for unrelated keys like update.github_repo).
+        if key == "startup.enabled" or key.startswith("startup."):
+            WindowsStartupManager().sync(cfg.startup.enabled)
         console.print(f"[green]Updated {key} -> saved to {path}[/green]")
         return
     if show:

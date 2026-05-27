@@ -123,13 +123,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f scripts/sync_version_from_pyproject.py
+          test -f scripts/verify_version_from_pyproject.py
           test -f scripts/build_exe.py
           echo "Building commit $(git rev-parse HEAD) for ${{ needs.tag.outputs.tag }}"
-
-      - name: Sync app/version.py from pyproject.toml
-        shell: bash
-        run: python scripts/sync_version_from_pyproject.py
 
       - name: Install dependencies
         shell: bash
@@ -138,6 +134,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-windows.txt
           pip install -e .
+
+      - name: Verify version from pyproject.toml
+        shell: bash
+        run: python scripts/verify_version_from_pyproject.py
+
+      - name: Verify Drive discovery documents
+        shell: bash
+        run: python scripts/verify_drive_discovery.py
 
       - name: Write bundled OTA metadata
         shell: bash

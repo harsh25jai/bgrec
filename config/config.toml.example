@@ -20,7 +20,7 @@ prevent_sleep_during_recording = true
 enabled = true
 retry_max_attempts = 5
 retry_delay_seconds = 30
-upload_workers = 2
+upload_workers = 1
 
 # When enabled: keep .enc under recordings/encrypted locally; upload plain .mp3/.flac to Drive
 [encryption]

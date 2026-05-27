@@ -53,12 +53,25 @@ if ((Test-Path $exampleConfig) -and -not (Test-Path $configPath)) {
     Copy-Item $exampleConfig $configPath
 }
 
+function Invoke-BgrecInstall {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$BgrecArgs)
+    # Native exes log INFO to stderr (loguru); with $ErrorActionPreference Stop that becomes a terminating error.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $TargetExe @BgrecArgs 2>&1 | Out-Null
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+}
+
 $bundledRepo = Join-Path $PackageRoot "github-repo.txt"
 if (Test-Path $bundledRepo) {
     $repo = (Get-Content $bundledRepo -Raw).Trim()
     if ($repo -and $repo -notmatch "YOUR_GITHUB" -and $repo.Contains("/")) {
-        & $TargetExe config migrate 2>$null
-        & $TargetExe config --key update.github_repo --value $repo 2>$null
+        Invoke-BgrecInstall config migrate | Out-Null
+        Invoke-BgrecInstall config --key update.github_repo --value $repo | Out-Null
         Write-Host "OTA: github_repo=$repo" -ForegroundColor DarkGray
     }
 }
@@ -91,13 +104,16 @@ Write-Host "Installed to: $TargetExe" -ForegroundColor Green
 
 if (-not $NoAutoStart) {
     Write-Host "`n==> Starting recorder in background..." -ForegroundColor Cyan
-    & $TargetExe start --background 2>&1 | Out-Null
+    Invoke-BgrecInstall start --background | Out-Null
     Start-Sleep -Seconds 4
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $statusText = (& $TargetExe status 2>&1 | Out-String)
+    $ErrorActionPreference = $prevEap
     if ($statusText -match 'Working properly\s+\|\s+yes') {
         Write-Host "Recorder is running and healthy." -ForegroundColor Green
     } elseif ($statusText -match 'Running\s+\|\s+yes') {
-        Write-Host "Recorder process is up but has issues — run: bgrec status" -ForegroundColor Yellow
+        Write-Host "Recorder process is up but has issues - run: bgrec status" -ForegroundColor Yellow
     } else {
         Write-Host "Daemon may still be starting. Check: bgrec status" -ForegroundColor Yellow
         Write-Host "Logs: $InstallDir\logs\daemon-spawn.log" -ForegroundColor DarkGray
@@ -106,9 +122,9 @@ if (-not $NoAutoStart) {
 
 if (-not $SkipStartupRegistry) {
     Write-Host "`n==> Adding to Windows startup (runs after sign-in)..." -ForegroundColor Cyan
-    & $TargetExe install-startup
-    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-        Write-Host "install-startup returned exit code $LASTEXITCODE" -ForegroundColor Yellow
+    $startupExit = Invoke-BgrecInstall install-startup
+    if ($startupExit -and $startupExit -ne 0) {
+        Write-Host "install-startup returned exit code $startupExit" -ForegroundColor Yellow
     } else {
         Write-Host "Startup entry added." -ForegroundColor Green
     }

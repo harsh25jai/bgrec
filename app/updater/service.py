@@ -13,6 +13,12 @@ from app.config.settings import AppConfig, default_data_dirs, load_config, save_
 from app.logging.setup import get_logger
 from app.updater.apply import apply_update, is_ota_target_install, read_current_meta
 from app.updater.bundled import read_bundled_github_repo
+from app.updater.ota_state import (
+    already_at_release,
+    auto_apply_backoff_active,
+    backoff_message,
+    is_apply_in_progress,
+)
 from app.updater.manifest import (
     ReleaseManifest,
     default_manifest_url,
@@ -20,7 +26,8 @@ from app.updater.manifest import (
     is_update_available,
     supports_upgrade,
 )
-from app.version import get_version, normalize_version
+from app.install.portable import get_installed_version_for_ota
+from app.version import normalize_version
 
 log = get_logger("updater")
 
@@ -67,7 +74,7 @@ def resolve_manifest_url(cfg: AppConfig) -> str:
 
 def check_for_updates(cfg: AppConfig | None = None) -> UpdateCheckResult:
     cfg = ensure_update_repo(cfg or load_config())
-    current = get_version()
+    current = get_installed_version_for_ota()
     root = default_data_dirs()["root"]
     meta = load_config_meta(root)
     last_applied = read_current_meta().get("version") or meta.get("merged_from_version")
@@ -140,8 +147,16 @@ def check_for_updates(cfg: AppConfig | None = None) -> UpdateCheckResult:
             ota_capable=is_ota_target_install(),
         )
 
-    available = is_update_available(current, manifest)
-    msg = f"Update available: {current} → {manifest.version}" if available else f"Up to date ({current})"
+    if already_at_release(current, manifest.version, last_applied):
+        available = False
+        msg = f"Up to date ({current})"
+    else:
+        available = is_update_available(current, manifest)
+        msg = (
+            f"Update available: {current} → {manifest.version}"
+            if available
+            else f"Up to date ({current})"
+        )
 
     return UpdateCheckResult(
         current_version=current,
@@ -158,8 +173,11 @@ def check_for_updates(cfg: AppConfig | None = None) -> UpdateCheckResult:
 
 def spawn_unattended_update() -> None:
     """Launch a detached process to stop this daemon, apply OTA, and restart."""
-    if getattr(sys, "frozen", False):
-        cmd = [sys.executable, "update", "--yes", "--unattended"]
+    from app.install.portable import preferred_bgrec_executable
+
+    exe = preferred_bgrec_executable()
+    if getattr(sys, "frozen", False) or exe.name.lower() == "bgrec.exe":
+        cmd = [str(exe), "update", "--yes", "--unattended"]
     else:
         cmd = [sys.executable, "-m", "app.cli.main", "update", "--yes", "--unattended"]
 
@@ -177,18 +195,32 @@ def spawn_unattended_update() -> None:
     )
 
 
-def try_auto_apply(cfg: AppConfig, result: UpdateCheckResult, *, unattended: bool) -> bool:
+def try_auto_apply(
+    cfg: AppConfig,
+    result: UpdateCheckResult,
+    *,
+    unattended: bool,
+    force: bool = False,
+) -> bool:
     """Apply update if available. Returns True if this process should exit (restarted elsewhere)."""
     if not result.update_available or not result.manifest:
         return False
     if not result.ota_capable:
         log.debug("OTA apply skipped: not a portable install")
         return False
-    if not cfg.update.auto_apply and not unattended:
+    if not cfg.update.auto_apply and not unattended and not force:
+        return False
+    if is_apply_in_progress():
+        log.warning("OTA apply skipped: another update is in progress")
+        return False
+    if auto_apply_backoff_active(force=force):
+        msg = backoff_message()
+        if msg:
+            log.warning("{}", msg)
         return False
 
     log.info("OTA: applying {} → {}", result.current_version, result.manifest.version)
-    applied = apply_update(result.manifest, force=unattended, restart=True)
+    applied = apply_update(result.manifest, force=unattended or force, restart=True)
     if applied.success:
         log.info("OTA: {}", applied.message)
         return True
@@ -198,8 +230,10 @@ def try_auto_apply(cfg: AppConfig, result: UpdateCheckResult, *, unattended: boo
 
 def run_startup_ota_if_needed() -> bool:
     """
-    Run before the daemon starts recording.
-    If an update is applied, a new daemon is spawned and this process should exit.
+    Check for updates before the daemon starts recording.
+
+    Does not block startup on a large download. Auto-apply runs via the background
+    scheduler (shortly after the daemon starts) or `bgrec update --yes`.
     """
     cfg = ensure_update_repo(load_config())
     if not cfg.update.enabled:
@@ -217,10 +251,17 @@ def run_startup_ota_if_needed() -> bool:
         log.debug("Startup OTA: {}", result.message)
         return False
     if not cfg.update.auto_apply:
-        log.info("OTA: {} (auto_apply is off)", result.message)
+        log.info("OTA: {} (auto_apply is off — run: bgrec update --yes)", result.message)
+        return False
+    if auto_apply_backoff_active():
+        log.warning("Startup OTA skipped: {}", backoff_message() or "recent apply failure")
+        return False
+    if is_apply_in_progress():
+        log.warning("Startup OTA skipped: apply already in progress")
         return False
 
-    return try_auto_apply(cfg, result, unattended=True)
+    log.info("OTA on start: {} (will apply in background after recorder starts)", result.message)
+    return False
 
 
 def run_periodic_update_check() -> None:
@@ -256,7 +297,11 @@ def run_periodic_update_check() -> None:
         result = check_for_updates(cfg)
         if not result.update_available or not result.manifest:
             return
+        if auto_apply_backoff_active() or is_apply_in_progress():
+            return
         log.info("OTA: {}", result.message)
+        if try_auto_apply(cfg, result, unattended=True):
+            return
         spawn_unattended_update()
         time.sleep(2.0)
     finally:

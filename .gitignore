@@ -12,3 +12,4 @@ token.json
 encryption.key
 *.log
 .DS_Store
+.pip_check
