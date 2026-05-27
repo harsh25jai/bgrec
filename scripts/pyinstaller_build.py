@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -11,30 +12,16 @@ DIST = ROOT / "dist"
 BUILD = ROOT / "build"
 ENTRY = ROOT / "app" / "cli" / "main.py"
 
-# Packages PyInstaller often misses (dynamic imports / metadata).
+# PyInstaller often misses these (CLI + Google + audio stack).
 HIDDEN_IMPORTS = [
-    "app",
     "app.cli.main",
-    "app.config.settings",
-    "app.recorder.audio_recorder",
-    "app.recorder.converter",
-    "app.scheduler.coordinator",
-    "app.service.daemon",
-    "app.service.state",
-    "app.service.watchdog",
-    "app.startup.windows_startup",
-    "app.uploader.drive_client",
-    "app.uploader.upload_queue",
-    "app.crypto.encryption",
-    "app.retention.cleanup",
-    "app.logging.setup",
-    "app.platform_check",
     "typer",
     "typer.core",
     "typer.main",
     "typer.models",
     "click",
     "shellingham",
+    "typing_extensions",
     "rich",
     "rich.console",
     "rich.table",
@@ -59,6 +46,7 @@ HIDDEN_IMPORTS = [
     "tomli_w",
 ]
 
+# collect-all bundles package data; avoid copy-metadata (often breaks on Windows).
 COLLECT_ALL = [
     "typer",
     "click",
@@ -67,13 +55,27 @@ COLLECT_ALL = [
     "cryptography",
     "googleapiclient",
     "google_auth_oauthlib",
-    "numpy",
 ]
 
-COLLECT_SUBMODULES = [
-    "app",
-    "googleapiclient",
-]
+
+def check_build_prereqs() -> None:
+    """Fail fast with a clear message before PyInstaller runs."""
+    missing: list[str] = []
+    for name in ("PyInstaller", "typer", "rich", "click", "numpy", "sounddevice", "cryptography"):
+        if importlib.util.find_spec(name) is None:
+            missing.append(name)
+    if missing:
+        raise RuntimeError(
+            "Missing Python packages: "
+            + ", ".join(missing)
+            + "\n\nRun from the repo root:\n"
+            "  pip install -r requirements-windows.txt\n"
+            "  pip install -e .\n"
+        )
+    # Ensure the application package resolves (editable install).
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    importlib.import_module("app.cli.main")
 
 
 def pyinstaller_command() -> list[str]:
@@ -95,16 +97,12 @@ def pyinstaller_command() -> list[str]:
         cmd.append(f"--hidden-import={mod}")
     for pkg in COLLECT_ALL:
         cmd.append(f"--collect-all={pkg}")
-    for pkg in COLLECT_SUBMODULES:
-        cmd.append(f"--collect-submodules={pkg}")
-    for pkg in ("typer", "rich", "click"):
-        cmd.append(f"--copy-metadata={pkg}")
     cmd.append(str(ENTRY))
     return cmd
 
 
 def verify_build(exe: Path) -> None:
-    """Quick smoke test: bundled exe must import typer."""
+    """Smoke test: bundled exe should show CLI help without import errors."""
     result = subprocess.run(
         [str(exe), "--help"],
         capture_output=True,
@@ -115,7 +113,9 @@ def verify_build(exe: Path) -> None:
     combined = (result.stdout or "") + (result.stderr or "")
     if result.returncode != 0 or "No module named" in combined:
         raise RuntimeError(
-            f"Build verification failed (exit {result.returncode}).\n{combined[:2000]}"
+            f"Build verification failed (exit {result.returncode}).\n"
+            f"{combined[:3000]}\n\n"
+            "If PyInstaller succeeded, try: python scripts/build_exe.py --no-verify"
         )
 
 
@@ -126,14 +126,44 @@ def run_build(*, verify: bool = True) -> Path:
             "From Mac, run:  ./scripts/build-windows-from-mac.sh\n"
             "That builds on GitHub Actions (Windows runner) and downloads the ZIP."
         )
+
+    check_build_prereqs()
     cmd = pyinstaller_command()
-    print("Running:", " ".join(cmd))
-    subprocess.check_call(cmd, cwd=ROOT)
+    print("Running PyInstaller (this may take a few minutes)...")
+    print("Command:", " ".join(cmd))
+
+    log_file = BUILD / "pyinstaller-last.log"
+    BUILD.mkdir(parents=True, exist_ok=True)
+    try:
+        with log_file.open("w", encoding="utf-8") as log:
+            subprocess.check_call(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as exc:
+        tail = ""
+        if log_file.exists():
+            lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+            tail = "\n".join(lines[-40:])
+        raise RuntimeError(
+            f"PyInstaller failed (exit {exc.returncode}).\n"
+            f"Full log: {log_file}\n\n"
+            f"Last lines:\n{tail}"
+        ) from exc
+
     exe = DIST / "bgrec.exe"
     if not exe.exists():
         raise FileNotFoundError(f"Expected output not found: {exe}")
+
     if verify:
         print("Verifying bundled exe...")
-        verify_build(exe)
-        print("Verification OK")
+        try:
+            verify_build(exe)
+            print("Verification OK")
+        except RuntimeError:
+            print(
+                "WARNING: verification failed but bgrec.exe was created.\n"
+                "  Test manually: dist\\bgrec.exe --help\n"
+                "  Or rebuild with: python scripts/build_exe.py --no-verify",
+                file=sys.stderr,
+            )
+            raise
+
     return exe
