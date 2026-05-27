@@ -10,35 +10,55 @@ from app.logging.setup import get_logger
 
 log = get_logger("retention")
 
+AUDIO_SUFFIXES = {".mp3", ".flac", ".wav"}
+
 
 class RetentionManager:
     def __init__(self, config: AppConfig, paths: dict[str, Path]) -> None:
         self.config = config
         self.paths = paths
 
-    def run_cleanup(self) -> int:
+    def run_cleanup(self, pending_local_paths: set[str] | None = None) -> int:
+        """
+        Age-based cleanup for stray plaintext in recordings/ only.
+
+        Does NOT delete pending queue, encrypted vault, or paths still in upload state —
+        those are removed by delete_after_upload after a successful Drive upload.
+        """
         removed = 0
         days = self.config.retention.local_retention_days
         if days <= 0:
             return 0
+
+        pending_local_paths = pending_local_paths or set()
         cutoff = time.time() - days * 86400
-        dirs = [
-            self.paths["recordings"],
-            self.paths["recordings"] / "encrypted",
-            self.paths["pending_uploads"],
-            self.paths["cache"] / "upload_temp",
-            self.paths["cache"],
-        ]
-        for directory in dirs:
-            if not directory.exists():
-                continue
-            for f in directory.rglob("*"):
+        recordings_dir = self.paths["recordings"]
+
+        if recordings_dir.exists():
+            for f in recordings_dir.iterdir():
+                if not f.is_file() or f.suffix.lower() not in AUDIO_SUFFIXES:
+                    continue
+                key = str(f.resolve())
+                if key in pending_local_paths:
+                    continue
+                if f.stat().st_mtime >= cutoff:
+                    continue
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError as exc:
+                    log.warning("Could not delete {}: {}", f, exc)
+
+        upload_temp = self.paths["cache"] / "upload_temp"
+        if upload_temp.exists():
+            for f in upload_temp.iterdir():
                 if f.is_file() and f.stat().st_mtime < cutoff:
                     try:
                         f.unlink()
                         removed += 1
                     except OSError as exc:
                         log.warning("Could not delete {}: {}", f, exc)
+
         if removed:
             log.info("Retention cleanup removed {} file(s)", removed)
         return removed
