@@ -2,10 +2,10 @@
 # Print the PowerShell one-liner to install on Windows (after pushing install.ps1 to GitHub).
 #
 # Usage:
-#   ./scripts/print-install-oneliner.sh your-github-user/background-recorder
+#   ./scripts/print-install-oneliner.sh your-github-user/bgrec
 
 set -euo pipefail
-REPO="${1:-YOUR_GITHUB_USER/background-recorder}"
+REPO="${1:-YOUR_GITHUB_USER/bgrec}"
 BRANCH="${2:-main}"
 RAW="https://raw.githubusercontent.com/${REPO}/${BRANCH}/install.ps1"
 

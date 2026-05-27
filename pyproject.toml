@@ -3,13 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "background-audio-recorder"
+name = "bgrec"
 version = "1.0.0"
-description = "Windows background microphone recorder with encrypted Google Drive backup"
+description = "bgrec — Windows microphone recorder with Google Drive backup"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Background Audio Recorder Contributors" }]
+authors = [{ name = "bgrec contributors" }]
 dependencies = [
     "sounddevice>=0.5.0",
     "numpy>=1.26.0",

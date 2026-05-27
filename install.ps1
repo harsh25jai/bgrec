@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  One-script installer for Background Audio Recorder (Windows 10/11).
+  One-script installer for bgrec (Windows 10/11).
 
 .DESCRIPTION
   Copy this single file to any Windows PC (or paste the one-liner from README) and run.
@@ -14,18 +14,19 @@
   .\install.ps1
 
 .EXAMPLE
-  .\install.ps1 -GitHubRepo "yourname/background-recorder" -InstallPython
+  .\install.ps1 -GitHubRepo "yourname/bgrec" -InstallPython
 
   ffmpeg is installed automatically via winget when missing (use -SkipFfmpeg to opt out).
 #>
 
 param(
-    [string]$GitHubRepo = "YOUR_GITHUB_USER/background-recorder",
+    [string]$GitHubRepo = "YOUR_GITHUB_USER/bgrec",
     [string]$Branch = "main",
     [string]$ZipUrl = "",
     [switch]$InstallPython,
     [switch]$SkipFfmpeg,
-    [switch]$SkipStartupPrompt
+    [switch]$NoAutoStart,
+    [switch]$SkipStartupRegistry
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,7 +37,7 @@ function Import-FfmpegHelper {
         . $local
         return
     }
-    if ($GitHubRepo -eq "YOUR_GITHUB_USER/background-recorder" -and -not $ZipUrl) {
+    if ($GitHubRepo -eq "YOUR_GITHUB_USER/bgrec" -and -not $ZipUrl) {
         throw @"
 Cannot load ffmpeg installer helper.
 Run from a full repo clone, or set -GitHubRepo so install.ps1 can download:
@@ -57,7 +58,7 @@ Run from a full repo clone, or set -GitHubRepo so install.ps1 can download:
 Import-FfmpegHelper
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$InstallDir = Join-Path $env:LOCALAPPDATA "BackgroundAudioRecorder"
+$InstallDir = Join-Path $env:LOCALAPPDATA "bgrec"
 $AppDir = Join-Path $InstallDir "app"
 $VenvPath = Join-Path $InstallDir "venv"
 $BinLauncher = Join-Path $InstallDir "bgrec.cmd"
@@ -107,15 +108,15 @@ function Get-ProjectRoot {
 }
 
 function Download-Source {
-    if ($GitHubRepo -eq "YOUR_GITHUB_USER/background-recorder" -and -not $ZipUrl) {
+    if ($GitHubRepo -eq "YOUR_GITHUB_USER/bgrec" -and -not $ZipUrl) {
         throw @"
 Set your GitHub repo before installing:
 
-  .\install.ps1 -GitHubRepo "your-username/background-recorder"
+  .\install.ps1 -GitHubRepo "your-username/bgrec"
 
 Or host a ZIP anywhere and pass:
 
-  .\install.ps1 -ZipUrl "https://example.com/background-recorder.zip"
+  .\install.ps1 -ZipUrl "https://example.com/bgrec.zip"
 "@
     }
 
@@ -189,7 +190,7 @@ function Install-App([string]$ProjectRoot) {
 # --- Main ---
 Write-Host @"
 
-  Background Audio Recorder — Installer
+  bgrec — Installer
   =====================================
 
 "@ -ForegroundColor Cyan
@@ -213,17 +214,28 @@ Write-Host @"
   Config:    $InstallDir\config.toml
   OAuth:     $InstallDir\credentials\credentials.json
 
-  Next (new terminal):
-    bgrec login-google
-    bgrec list-devices
-    bgrec start --background
-    bgrec status
+  Optional: bgrec login-google  (Drive upload)
+  Check:     bgrec status
 
 "@ -ForegroundColor Green
 
-if (-not $SkipStartupPrompt) {
-    $addStartup = Read-Host "Add to Windows startup now? (y/N)"
-    if ($addStartup -eq "y" -or $addStartup -eq "Y") {
-        & $BinLauncher install-startup
+if (-not $NoAutoStart) {
+    Write-Step "Starting recorder in background"
+    & $BinLauncher start --background
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        Write-Host "Could not start automatically. Open a new terminal: bgrec start --background" -ForegroundColor Yellow
+    } else {
+        Write-Host "Recorder is running." -ForegroundColor Green
+        & $BinLauncher status 2>$null
+    }
+}
+
+if (-not $SkipStartupRegistry) {
+    Write-Step "Adding to Windows startup"
+    & $BinLauncher install-startup
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        Write-Host "install-startup failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
+    } else {
+        Write-Host "Startup entry added (runs after sign-in)." -ForegroundColor Green
     }
 }

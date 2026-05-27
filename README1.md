@@ -1,18 +1,26 @@
-On Windows — paste one line
-After your repo is on GitHub (your-user/background-recorder):
+# bgrec — install one-liners (notes)
 
-Set-ExecutionPolicy -Scope Process Bypass -Force; Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/YOUR_USER/background-recorder/main/install.ps1'))
-With automatic Python + ffmpeg via winget:
+After your repo is on GitHub (`your-user/bgrec`):
 
-Set-ExecutionPolicy -Scope Process Bypass -Force; $s = (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/YOUR_USER/background-recorder/main/install.ps1'); Invoke-Expression "$s -GitHubRepo 'YOUR_USER/background-recorder' -InstallPython -InstallFfmpeg"
-Then open a new terminal:
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force; Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/YOUR_USER/bgrec/main/install.ps1'))
+```
 
+With automatic Python install if missing:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force; $s = (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/YOUR_USER/bgrec/main/install.ps1'); Invoke-Expression "$s -GitHubRepo 'YOUR_USER/bgrec' -InstallPython"
+```
+
+```cmd
 bgrec login-google
 bgrec start --background
-On Mac — get your personalized line
-./scripts/print-install-oneliner.sh your-github-user/background-recorder
-Alternative: copy only install.ps1
-Copy that single file to Windows (USB, email, etc.) and run:
+```
 
+```bash
+./scripts/print-install-oneliner.sh your-github-user/bgrec
+```
 
-.\install.ps1 -GitHubRepo "your-user/background-recorder" -InstallPython -InstallFfmpeg
+```powershell
+.\install.ps1 -GitHubRepo "your-user/bgrec" -InstallPython
+```

@@ -19,7 +19,11 @@ import tomli_w
 
 def _app_data_dir() -> Path:
     base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
-    return Path(base) / "BackgroundAudioRecorder"
+    data_dir = Path(base) / "bgrec"
+    legacy = Path(base) / "BackgroundAudioRecorder"
+    if not data_dir.exists() and legacy.exists():
+        return legacy
+    return data_dir
 
 
 def default_config_path() -> Path:
@@ -87,7 +91,7 @@ class LoggingConfig:
 class GoogleConfig:
     credentials_file: str = "credentials.json"
     token_file: str = "token.json"
-    app_folder_name: str = "BackgroundAudioRecorder"
+    app_folder_name: str = "bgrec"
 
 
 @dataclass

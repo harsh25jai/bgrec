@@ -3,7 +3,7 @@ REM Decrypt a .enc file (works without rebuilding bgrec.exe if Python venv exist
 REM Usage: decrypt-recording.cmd "C:\path\to\file.flac.enc"
 
 setlocal
-set "PY=%LOCALAPPDATA%\BackgroundAudioRecorder\venv\Scripts\python.exe"
+set "PY=%LOCALAPPDATA%\bgrec\venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 
 set "SCRIPT=%~dp0scripts\decrypt_recording.py"

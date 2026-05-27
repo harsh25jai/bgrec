@@ -25,7 +25,7 @@ class DriveClient:
         credentials_dir: Path,
         credentials_file: str = "credentials.json",
         token_file: str = "token.json",
-        app_folder_name: str = "BackgroundAudioRecorder",
+        app_folder_name: str = "bgrec",
     ) -> None:
         self.credentials_path = credentials_dir / credentials_file
         self.token_path = credentials_dir / token_file

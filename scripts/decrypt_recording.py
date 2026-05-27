@@ -5,7 +5,7 @@ Usage (from repo root, with deps installed):
   python scripts/decrypt_recording.py "C:\\path\\to\\rec_20250101.flac.enc"
   python scripts/decrypt_recording.py file.enc -o playback.flac
 
-Uses: %LOCALAPPDATA%\\BackgroundAudioRecorder\\encryption.key
+Uses: %LOCALAPPDATA%\\bgrec\\encryption.key
 """
 
 from __future__ import annotations
@@ -24,7 +24,11 @@ from app.crypto.encryption import EncryptionManager
 
 def default_key_path() -> Path:
     base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
-    return Path(base) / "BackgroundAudioRecorder" / "encryption.key"
+    base_dir = Path(base) / "bgrec"
+    legacy = Path(base) / "BackgroundAudioRecorder"
+    if not base_dir.exists() and legacy.exists():
+        base_dir = legacy
+    return base_dir / "encryption.key"
 
 
 def main() -> int:
@@ -35,7 +39,7 @@ def main() -> int:
         "--key",
         type=Path,
         default=None,
-        help="encryption.key path (default: %%LOCALAPPDATA%%\\BackgroundAudioRecorder\\encryption.key)",
+        help="encryption.key path (default: %%LOCALAPPDATA%%\\bgrec\\encryption.key)",
     )
     args = parser.parse_args()
 

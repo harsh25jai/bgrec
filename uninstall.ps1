@@ -1,15 +1,16 @@
-# Background Audio Recorder — uninstall script
+# bgrec — uninstall script
 # Run: Set-ExecutionPolicy -Scope Process Bypass; .\uninstall.ps1
 
 $ErrorActionPreference = "Stop"
 
-$InstallDir = Join-Path $env:LOCALAPPDATA "BackgroundAudioRecorder"
+$InstallDir = Join-Path $env:LOCALAPPDATA "bgrec"
+$LegacyInstallDir = Join-Path $env:LOCALAPPDATA "BackgroundAudioRecorder"
 $AppDir = Join-Path $InstallDir "app"
 $VenvPython = Join-Path $InstallDir "venv\Scripts\python.exe"
 $LegacyVenv = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $VenvPython) -and (Test-Path $LegacyVenv)) { $VenvPython = $LegacyVenv }
 
-Write-Host "=== Background Audio Recorder Uninstaller ===" -ForegroundColor Cyan
+Write-Host "=== bgrec Uninstaller ===" -ForegroundColor Cyan
 
 # Stop service
 $PortableExe = Join-Path $InstallDir "bin\bgrec.exe"
@@ -23,23 +24,27 @@ if (Test-Path $PortableExe) {
     if ($bgrec) { & bgrec stop 2>$null }
 }
 
-# Remove startup registry entry
-try {
-    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
-        -Name "BackgroundAudioRecorder" -ErrorAction SilentlyContinue
-    Write-Host "Removed startup registry entry." -ForegroundColor Green
-} catch {
-    Write-Host "No startup registry entry found."
+# Remove startup registry entry (current and legacy name)
+$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+foreach ($entry in @("bgrec", "BackgroundAudioRecorder")) {
+    try {
+        Remove-ItemProperty -Path $runKey -Name $entry -ErrorAction Stop
+        Write-Host "Removed startup entry: $entry" -ForegroundColor Green
+    } catch {
+        # not present
+    }
 }
 
 $removeData = Read-Host "Delete all local data (recordings, keys, config)? (y/N)"
 if ($removeData -eq "y" -or $removeData -eq "Y") {
-    if (Test-Path $InstallDir) {
-        Remove-Item -Recurse -Force $InstallDir
-        Write-Host "Removed $InstallDir" -ForegroundColor Green
+    foreach ($dir in @($InstallDir, $LegacyInstallDir)) {
+        if (Test-Path $dir) {
+            Remove-Item -Recurse -Force $dir
+            Write-Host "Removed $dir" -ForegroundColor Green
+        }
     }
 } else {
-    Write-Host "Local data kept at: $InstallDir"
+    Write-Host "Local data kept at: $InstallDir (legacy: $LegacyInstallDir)"
 }
 
 $removeApp = Read-Host "Remove installed app source and venv under LocalAppData? (y/N)"

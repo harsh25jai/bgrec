@@ -1,5 +1,5 @@
-# Background Audio Recorder — sample configuration
-# Copy to: %LOCALAPPDATA%\BackgroundAudioRecorder\config.toml
+# bgrec — sample configuration
+# Copy to: %LOCALAPPDATA%\bgrec\config.toml
 # Or run `bgrec config` after first launch (auto-created).
 
 [recording]
@@ -40,9 +40,9 @@ backup_count = 5
 [google]
 credentials_file = "credentials.json"
 token_file = "token.json"
-app_folder_name = "BackgroundAudioRecorder"
+app_folder_name = "bgrec"
 
-# Optional path overrides (defaults under %LOCALAPPDATA%\BackgroundAudioRecorder)
+# Optional path overrides (defaults under %LOCALAPPDATA%\bgrec)
 [paths]
 # recordings = "D:\\AudioBackup\\recordings"
 # cache = "D:\\AudioBackup\\cache"

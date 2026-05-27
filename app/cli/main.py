@@ -1,4 +1,4 @@
-"""Command-line interface for Background Audio Recorder."""
+"""Command-line interface for bgrec."""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from app.config.settings import (
     load_config,
     save_config,
 )
-from app.crypto.encryption import EncryptionManager
 from app.logging.setup import configure_logging, get_logger
 from app.recorder.audio_recorder import list_input_devices
 from app.scheduler.coordinator import ServiceCoordinator
@@ -32,7 +31,7 @@ from app.uploader.drive_client import DriveClient
 
 app = typer.Typer(
     name="bgrec",
-    help="Background Audio Recorder — user-consented microphone capture with encrypted Google Drive backup.",
+    help="bgrec — user-consented microphone capture with encrypted Google Drive backup.",
     no_args_is_help=True,
 )
 console = Console()
@@ -93,7 +92,7 @@ def status() -> None:
     )
     auth_key, auth_msg = drive.google_auth_status()
 
-    table = Table(title="Background Audio Recorder")
+    table = Table(title="bgrec")
     table.add_column("Field", style="cyan")
     table.add_column("Value")
 
@@ -211,38 +210,6 @@ def delete_local_cache(
     paths = cfg.ensure_directories()
     n = RetentionManager(cfg, paths).delete_local_cache()
     console.print(f"[green]Removed {n} cached file(s)[/green]")
-
-
-@app.command("decrypt")
-def decrypt(
-    encrypted: Path = typer.Argument(..., help="Path to a .enc file (local or downloaded from Drive)."),
-    output: Optional[Path] = typer.Option(
-        None, "--output", "-o", help="Output audio path (default: strip .enc → e.g. rec_20250101.flac)"
-    ),
-) -> None:
-    """Decrypt a recording using your local encryption.key (then play with any media player)."""
-    cfg = _load()
-    paths = cfg.ensure_directories()
-    enc_path = encrypted.expanduser().resolve()
-    if not enc_path.is_file():
-        console.print(f"[red]File not found:[/red] {enc_path}")
-        raise typer.Exit(1)
-    if enc_path.suffix != ".enc":
-        console.print("[yellow]Warning: file does not end with .enc[/yellow]")
-
-    out_path = output or enc_path.with_suffix("")
-    key_path = paths["root"] / "encryption.key"
-    if not key_path.exists():
-        console.print(
-            f"[red]Missing encryption key:[/red] {key_path}\n"
-            "You need the same PC/key that encrypted this file."
-        )
-        raise typer.Exit(1)
-
-    mgr = EncryptionManager(key_path, enabled=True)
-    mgr.decrypt_file(enc_path, out_path)
-    console.print(f"[green]Decrypted to:[/green] {out_path}")
-    console.print("Open that file in VLC, Windows Media Player, etc.")
 
 
 @app.command("list-devices")

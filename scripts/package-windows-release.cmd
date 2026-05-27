@@ -11,8 +11,8 @@ cd /d "%~dp0.."
 set "ROOT=%CD%"
 set "DIST=%ROOT%\dist"
 set "EXE=%DIST%\bgrec.exe"
-set "RELEASE_DIR=%DIST%\BackgroundAudioRecorder-Windows"
-set "ZIP=%DIST%\BackgroundAudioRecorder-Windows.zip"
+set "RELEASE_DIR=%DIST%\bgrec-Windows"
+set "ZIP=%DIST%\bgrec-Windows.zip"
 
 if not exist "%EXE%" (
     echo ERROR: Missing %EXE%
@@ -34,10 +34,10 @@ copy /y "%ROOT%\scripts\decrypt_recording.py" "%RELEASE_DIR%\" >nul
 copy /y "%ROOT%\decrypt-recording.cmd" "%RELEASE_DIR%\" >nul
 
 (
-echo Background Audio Recorder — portable install
-echo ============================================
+echo bgrec — portable install
+echo ========================
 echo.
-echo 1. Unzip this folder anywhere ^(e.g. Desktop\BackgroundAudioRecorder^).
+echo 1. Unzip this folder anywhere ^(e.g. Desktop\bgrec^).
 echo 2. Open Command Prompt or PowerShell here and run:
 echo.
 echo    install-portable.cmd
@@ -46,7 +46,7 @@ echo    Set-ExecutionPolicy -Scope Process Bypass
 echo    .\install-portable.ps1
 echo.
 echo 3. Place Google OAuth credentials.json in:
-echo    %%LOCALAPPDATA%%\BackgroundAudioRecorder\credentials\credentials.json
+echo    %%LOCALAPPDATA%%\bgrec\credentials\credentials.json
 echo.
 echo 4. Open a NEW terminal ^(PATH refresh^) and run:
 echo.
@@ -59,7 +59,7 @@ echo ffmpeg is installed automatically by install-portable.cmd if missing.
 if exist "%ZIP%" del /f /q "%ZIP%"
 
 pushd "%DIST%"
-tar -caf "BackgroundAudioRecorder-Windows.zip" "BackgroundAudioRecorder-Windows"
+tar -caf "bgrec-Windows.zip" "bgrec-Windows"
 set "TAR_ERR=%ERRORLEVEL%"
 popd
 

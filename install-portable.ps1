@@ -7,7 +7,8 @@
 
 param(
     [switch]$SkipFfmpeg,
-    [switch]$SkipStartupPrompt
+    [switch]$NoAutoStart,
+    [switch]$SkipStartupRegistry
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,11 +24,11 @@ if (-not (Test-Path $helper)) {
 
 $PackageRoot = $PSScriptRoot
 $ExeSource = Join-Path $PackageRoot "bgrec.exe"
-$InstallDir = Join-Path $env:LOCALAPPDATA "BackgroundAudioRecorder"
+$InstallDir = Join-Path $env:LOCALAPPDATA "bgrec"
 $BinDir = Join-Path $InstallDir "bin"
 $TargetExe = Join-Path $BinDir "bgrec.exe"
 
-Write-Host "=== Background Audio Recorder (Portable) ===" -ForegroundColor Cyan
+Write-Host "=== bgrec (Portable) ===" -ForegroundColor Cyan
 
 if (-not (Test-Path $ExeSource)) {
     throw "bgrec.exe not found next to this script. Use the ZIP from the Windows build."
@@ -52,11 +53,13 @@ if ((Test-Path $exampleConfig) -and -not (Test-Path $configPath)) {
     Copy-Item $exampleConfig $configPath
 }
 
-# Legacy install.ps1 drops bgrec.cmd in $InstallDir; that wins over bin\bgrec.exe on PATH.
-$legacyCmd = Join-Path $InstallDir "bgrec.cmd"
-if (Test-Path $legacyCmd) {
-    Remove-Item $legacyCmd -Force
-    Write-Host "Removed legacy bgrec.cmd (script launcher)" -ForegroundColor Yellow
+# Legacy install.ps1 drops bgrec.cmd in data dir; that wins over bin\bgrec.exe on PATH.
+foreach ($dataDir in @($InstallDir, (Join-Path $env:LOCALAPPDATA "BackgroundAudioRecorder"))) {
+    $legacyCmd = Join-Path $dataDir "bgrec.cmd"
+    if (Test-Path $legacyCmd) {
+        Remove-Item $legacyCmd -Force
+        Write-Host "Removed legacy bgrec.cmd from $dataDir" -ForegroundColor Yellow
+    }
 }
 
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -75,19 +78,29 @@ Write-Host "Open a new terminal for 'bgrec' to be recognized." -ForegroundColor 
 
 Write-Host ""
 Write-Host "Installed to: $TargetExe" -ForegroundColor Green
-Write-Host "Next (new terminal):" -ForegroundColor Cyan
-Write-Host "  bgrec login-google"
-Write-Host "  bgrec start --background"
-Write-Host ""
 
-if (-not $SkipStartupPrompt) {
-    $addStartup = Read-Host "Add to Windows startup now? (y/N)"
-    if ($addStartup -eq "y" -or $addStartup -eq "Y") {
-        & $TargetExe install-startup
-        if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-            Write-Host "install-startup returned exit code $LASTEXITCODE" -ForegroundColor Yellow
-        }
+if (-not $NoAutoStart) {
+    Write-Host "`n==> Starting recorder in background..." -ForegroundColor Cyan
+    & $TargetExe start --background
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        Write-Host "Could not start automatically. After a new terminal: bgrec start --background" -ForegroundColor Yellow
+    } else {
+        Write-Host "Recorder is running." -ForegroundColor Green
+        & $TargetExe status 2>$null
     }
 }
 
+if (-not $SkipStartupRegistry) {
+    Write-Host "`n==> Adding to Windows startup (runs after sign-in)..." -ForegroundColor Cyan
+    & $TargetExe install-startup
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        Write-Host "install-startup returned exit code $LASTEXITCODE" -ForegroundColor Yellow
+    } else {
+        Write-Host "Startup entry added." -ForegroundColor Green
+    }
+}
+
+Write-Host ""
+Write-Host "Optional: bgrec login-google  (for Drive upload)" -ForegroundColor Cyan
+Write-Host "Check status: bgrec status" -ForegroundColor Cyan
 Write-Host "Done." -ForegroundColor Green
