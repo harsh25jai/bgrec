@@ -129,8 +129,10 @@ class ServiceCoordinator:
                 "Run: bgrec stop   then: bgrec start --background"
             )
 
+        from app.install.portable import preferred_bgrec_executable
+
         self.state.pid = os.getpid()
-        self.state.daemon_executable = sys.executable
+        self.state.daemon_executable = str(preferred_bgrec_executable())
         self.state.running = True
         self.state.started_at = time.time()
         self.state.clear_issue("daemon")

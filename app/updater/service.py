@@ -158,8 +158,11 @@ def check_for_updates(cfg: AppConfig | None = None) -> UpdateCheckResult:
 
 def spawn_unattended_update() -> None:
     """Launch a detached process to stop this daemon, apply OTA, and restart."""
-    if getattr(sys, "frozen", False):
-        cmd = [sys.executable, "update", "--yes", "--unattended"]
+    from app.install.portable import preferred_bgrec_executable
+
+    exe = preferred_bgrec_executable()
+    if getattr(sys, "frozen", False) or exe.name.lower() == "bgrec.exe":
+        cmd = [str(exe), "update", "--yes", "--unattended"]
     else:
         cmd = [sys.executable, "-m", "app.cli.main", "update", "--yes", "--unattended"]
 
