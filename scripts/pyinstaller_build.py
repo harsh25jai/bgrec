@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -60,22 +59,23 @@ COLLECT_ALL = [
 
 def check_build_prereqs() -> None:
     """Fail fast with a clear message before PyInstaller runs."""
-    missing: list[str] = []
-    for name in ("PyInstaller", "typer", "rich", "click", "numpy", "sounddevice", "cryptography"):
-        if importlib.util.find_spec(name) is None:
-            missing.append(name)
-    if missing:
+    verify_script = ROOT / "scripts" / "verify_deps.py"
+    result = subprocess.run(
+        [sys.executable, str(verify_script)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        output = (result.stdout or "") + (result.stderr or "")
         raise RuntimeError(
-            "Missing Python packages: "
-            + ", ".join(missing)
-            + "\n\nRun from the repo root:\n"
+            "Dependency check failed before PyInstaller.\n\n"
+            f"{output}\n"
+            "Fix:\n"
             "  pip install -r requirements-windows.txt\n"
             "  pip install -e .\n"
+            "  python scripts/verify_deps.py\n"
         )
-    # Ensure the application package resolves (editable install).
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    importlib.import_module("app.cli.main")
 
 
 def pyinstaller_command() -> list[str]:
