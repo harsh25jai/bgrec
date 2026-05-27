@@ -1,0 +1,48 @@
+# Background Audio Recorder — sample configuration
+# Copy to: %LOCALAPPDATA%\BackgroundAudioRecorder\config.toml
+# Or run `bgrec config` after first launch (auto-created).
+
+[recording]
+# Microphone: null = default, or device index/name from `bgrec list-devices`
+device = null
+chunk_duration_seconds = 300
+sample_rate = 16000
+channels = 1
+output_format = "flac"   # flac | mp3
+mp3_bitrate = "64k"
+silence_detection = false
+silence_threshold_db = -40.0
+silence_min_duration_seconds = 30.0
+
+[upload]
+enabled = true
+retry_max_attempts = 5
+retry_delay_seconds = 30
+upload_workers = 2
+
+[encryption]
+enabled = true
+
+[retention]
+local_retention_days = 7
+delete_after_upload = false
+
+[startup]
+enabled = false
+use_registry = true
+
+[logging]
+level = "INFO"
+max_bytes = 5242880
+backup_count = 5
+
+[google]
+credentials_file = "credentials.json"
+token_file = "token.json"
+app_folder_name = "BackgroundAudioRecorder"
+
+# Optional path overrides (defaults under %LOCALAPPDATA%\BackgroundAudioRecorder)
+[paths]
+# recordings = "D:\\AudioBackup\\recordings"
+# cache = "D:\\AudioBackup\\cache"
+# logs = "D:\\AudioBackup\\logs"
