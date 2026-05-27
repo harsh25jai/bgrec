@@ -23,6 +23,13 @@ from app.logging.setup import get_logger
 from app.service.daemon import StopResult, stop_daemon
 from app.updater.download import download_file
 from app.updater.manifest import ReleaseManifest
+from app.updater.ota_state import (
+    acquire_apply_lock,
+    clear_apply_failure,
+    is_apply_in_progress,
+    record_apply_failure,
+    release_apply_lock,
+)
 from app.updater.verify import verify_sha256, verify_size
 
 log = get_logger("updater.apply")
@@ -103,8 +110,15 @@ def apply_update(
     if manifest.channel == "test":
         return ApplyResult(False, "Refusing to apply test-channel manifest on stable install.")
 
+    if is_apply_in_progress():
+        return ApplyResult(False, "Another OTA apply is already in progress.")
+
+    if not acquire_apply_lock():
+        return ApplyResult(False, "Could not acquire OTA apply lock.")
+
     stop = stop_daemon()
     if stop == StopResult.FAILED:
+        release_apply_lock()
         if not force:
             return ApplyResult(
                 False,
@@ -154,6 +168,7 @@ def apply_update(
             log.info("Config migrate: {} keys added", len(merge.keys_added))
 
         write_current_meta(manifest.version, manifest.config_schema_version)
+        clear_apply_failure()
 
         if restart:
             from app.service.daemon import spawn_background
@@ -172,7 +187,10 @@ def apply_update(
         )
     except Exception as exc:
         log.exception("OTA apply failed: {}", exc)
+        record_apply_failure(manifest.version, str(exc))
         backup = bin_exe_path().with_name("bgrec.exe.bak")
         if backup.exists() and not bin_exe_path().exists():
             shutil.copy2(backup, bin_exe_path())
         return ApplyResult(False, str(exc))
+    finally:
+        release_apply_lock()
