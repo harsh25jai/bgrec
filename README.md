@@ -188,11 +188,14 @@ You can also trigger the build in the browser: **GitHub → Actions → Build Wi
 ```cmd
 pip install -r requirements-windows.txt
 pip install -e .
+python scripts\verify_deps.py
 python scripts\build_exe.py
 scripts\package-windows-release.cmd
 ```
 
-If PyInstaller fails, open `build\pyinstaller-last.log`. Retry after `pip install -e .`, or use `python scripts\build_exe.py --no-verify`.
+Note: use `requirements-windows.txt` (not `requirements-windoes.txt`). It includes PyInstaller plus everything in `requirements.txt`.
+
+If PyInstaller fails, open `build\pyinstaller-last.log`. Check deps only: `python scripts\build_exe.py --check-only`.
 
 Alternatives (same output ZIP):
 

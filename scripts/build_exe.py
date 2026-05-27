@@ -20,7 +20,20 @@ def main() -> None:
         action="store_true",
         help="Skip post-build smoke test (dist\\bgrec.exe --help)",
     )
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Only run dependency verification (no PyInstaller)",
+    )
     args = parser.parse_args()
+
+    if args.check_only:
+        from scripts.pyinstaller_build import check_build_prereqs
+
+        check_build_prereqs()
+        print("Dependency check OK — ready to build.")
+        return
+
     exe = run_build(verify=not args.no_verify)
     print(f"\nBuild complete: {exe}")
 
