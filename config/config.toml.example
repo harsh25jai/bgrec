@@ -44,6 +44,16 @@ credentials_file = "credentials.json"
 token_file = "token.json"
 app_folder_name = "bgrec"
 
+[update]
+enabled = true
+# Filled automatically from CI build (github-repo.txt); override only if needed
+github_repo = ""
+check_on_start = true
+check_interval_hours = 6
+channel = "stable"
+manifest_url = ""
+auto_apply = true
+
 # Optional path overrides (defaults under %LOCALAPPDATA%\bgrec)
 [paths]
 # recordings = "D:\\AudioBackup\\recordings"

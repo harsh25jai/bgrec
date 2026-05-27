@@ -41,6 +41,14 @@ Copy-Item (Join-Path $Root "install-portable.cmd") $ReleaseDir
 Copy-Item (Join-Path $Root "scripts\windows-ensure-ffmpeg.ps1") $ReleaseDir
 Copy-Item (Join-Path $Root "uninstall.ps1") $ReleaseDir
 Copy-Item (Join-Path $Root "config\config.toml.example") $ReleaseDir
+$repoFile = Join-Path $Root "config\github-repo.txt"
+if (Test-Path $repoFile) {
+    Copy-Item $repoFile $ReleaseDir
+}
+$schemaFile = Join-Path $Root "config\schema-version.txt"
+if (Test-Path $schemaFile) {
+    Copy-Item $schemaFile $ReleaseDir
+}
 Copy-Item (Join-Path $Root "README.md") $ReleaseDir
 Copy-Item (Join-Path $Root "scripts\decrypt_recording.py") $ReleaseDir
 Copy-Item (Join-Path $Root "decrypt-recording.cmd") $ReleaseDir

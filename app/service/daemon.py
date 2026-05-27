@@ -218,6 +218,21 @@ def stop_daemon() -> StopResult:
 
 def run_foreground(coordinator_factory) -> None:
     """Block in foreground running the coordinator."""
+    from app.updater.service import run_startup_ota_if_needed
+
+    cfg = load_config()
+    paths = cfg.ensure_directories()
+    configure_logging(
+        paths["logs"],
+        level=cfg.logging.level,
+        max_bytes=cfg.logging.max_bytes,
+        backup_count=cfg.logging.backup_count,
+    )
+
+    if run_startup_ota_if_needed():
+        log.info("OTA applied on startup — exiting so the new version can run")
+        sys.exit(0)
+
     path = state_path()
     state = reconcile_daemon_state(DaemonState.load(path), path)
     if state.pid and state.pid != os.getpid() and is_daemon_active(state):

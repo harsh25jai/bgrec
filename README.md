@@ -169,15 +169,50 @@ Check status with `bgrec status` (shows **Sleep inhibition** on/off).
 |---------|-------------|
 | `start` | Start recording (`--background` for detached) |
 | `stop` | Stop background service |
-| `status` | Show PID, chunks, pending uploads |
+| `status` | Show PID, chunks, pending uploads, version |
+| `version` | Installed version + OTA status (`--check-update`) |
+| `update` | OTA check/apply portable `bgrec.exe` (`--check`, `--yes`) |
+| `update --rollback` | Restore previous `bgrec.exe.bak` |
 | `login-google` | OAuth flow for Drive |
 | `upload-pending` | Upload queued encrypted files |
 | `config` | Show/update TOML config |
+| `config migrate` | Add missing keys from `config.toml.example` |
 | `list-recordings` | List local audio files |
 | `list-devices` | List microphone devices |
 | `delete-local-cache` | Clear pending upload cache |
 | `install-startup` | Add HKCU Run entry |
 | `uninstall-startup` | Remove Run entry |
+
+## Over-the-air updates (OTA)
+
+Portable installs update **automatically** from **GitHub Releases** on **main** (tag `v0.0.2`, etc.).
+
+**Version format:** `MAJOR.MINOR.PATCH` (e.g. `0.0.1`, `0.0.2`).
+
+**No user action required** when:
+
+- The build was produced by GitHub Actions (bundles `github-repo.txt`), and
+- `[update]` is enabled with defaults (`auto_apply = true`, `check_on_start = true`).
+
+On each daemon start and every 6 hours while running, bgrec checks `latest.json`, downloads `bgrec-Windows.zip` if newer, verifies SHA256, replaces `bin\bgrec.exe`, merges new config keys, and restarts.
+
+Manual checks (optional):
+
+```powershell
+bgrec version
+bgrec version --check-update
+bgrec update --check-only
+```
+
+Release process (main branch):
+
+1. Bump `version` in `pyproject.toml` (e.g. `0.0.1` → `0.0.2`). CI syncs `app/version.py`.
+2. Commit and **push/merge to `main`**.
+3. GitHub Actions creates tag **`v0.0.2`**, builds, and publishes Release + `latest.json`.
+4. Installed `bgrec` clients auto-update (no manual tag or `gh release` steps).
+
+- **Test branch:** artifact install only (no OTA manifest).
+- **Dev install (`pip install -e .`):** `git pull` + `pip install -e .` — not `bgrec update`.
 
 ## Build Windows EXE from macOS
 
@@ -187,12 +222,13 @@ PyInstaller **cannot** produce a Windows `.exe` on macOS. Use **GitHub Actions**
 # One-time setup
 brew install gh
 gh auth login
-git init
-gh repo create bgrec --private --source=. --push
 
-# Build on Windows cloud runner; download ZIP to dist/
-chmod +x scripts/build-windows-from-mac.sh
-./scripts/build-windows-from-mac.sh
+# Release: bump version in pyproject.toml, push to main (CI tags + publishes automatically)
+git checkout main
+# edit pyproject.toml -> version = "0.0.2"
+git commit -am "Release 0.0.2"
+git push origin main
+# Watch: GitHub → Actions → "Release Windows (main)"
 ```
 
 Output:

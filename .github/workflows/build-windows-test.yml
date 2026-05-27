@@ -33,6 +33,10 @@ jobs:
           pip install -r requirements-windows.txt
           pip install -e .
 
+      - name: Write bundled OTA metadata
+        shell: bash
+        run: echo "${{ github.repository }}" > config/github-repo.txt
+
       - name: Build executable
         run: python scripts/build_exe.py
 

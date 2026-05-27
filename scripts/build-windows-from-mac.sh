@@ -1,30 +1,29 @@
 #!/usr/bin/env bash
-# Build bgrec.exe on GitHub Actions (Windows runner) and download the portable ZIP.
-# PyInstaller cannot cross-compile Windows binaries on macOS.
+# Trigger a production release on GitHub Actions (Windows build + GitHub Release + OTA manifest).
 #
-# Prerequisites:
-#   brew install gh
-#   gh auth login
-#   git remote pointing to GitHub (or create one)
+# Normal flow: bump version in pyproject.toml and push to main — CI runs automatically.
+# This script pushes main and watches the workflow (or force-dispatches a rebuild).
 #
 # Usage:
 #   ./scripts/build-windows-from-mac.sh
-#   ./scripts/build-windows-from-mac.sh --open   # open Actions page in browser
+#   ./scripts/build-windows-from-mac.sh --force   # re-release current pyproject version
+#   ./scripts/build-windows-from-mac.sh --open
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 WORKFLOW="build-windows.yml"
-ARTIFACT_ZIP="bgrec-windows-release"
 OUT_DIR="$ROOT/dist"
 
 OPEN_BROWSER=false
+FORCE=false
 for arg in "$@"; do
   case "$arg" in
     --open) OPEN_BROWSER=true ;;
+    --force) FORCE=true ;;
     -h|--help)
-      sed -n '2,12p' "$0"
+      sed -n '2,14p' "$0"
       exit 0
       ;;
   esac
@@ -36,50 +35,51 @@ command -v gh >/dev/null 2>&1 || die "Install GitHub CLI: brew install gh && gh 
 command -v git >/dev/null 2>&1 || die "git is required"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  die "Not a git repository. Run: git init && gh repo create"
+  die "Not a git repository."
 fi
 
 if ! gh auth status >/dev/null 2>&1; then
   die "Not logged in to GitHub. Run: gh auth login"
 fi
 
-REMOTE="$(git remote get-url origin 2>/dev/null || true)"
-if [[ -z "$REMOTE" ]]; then
-  die "No git remote 'origin'. Add GitHub remote: git remote add origin <url>"
+VERSION="$(python3 scripts/read_version.py 2>/dev/null || true)"
+BRANCH="$(git branch --show-current 2>/dev/null || echo main)"
+
+echo "==> Project version (pyproject.toml): ${VERSION:-unknown}"
+echo "==> Current branch: $BRANCH"
+
+if [[ "$BRANCH" != "main" ]]; then
+  echo "WARNING: Production releases are triggered by pushes to **main** with a pyproject.toml version bump."
+  echo "         Merge to main and push, or: git checkout main"
 fi
 
-BRANCH="$(git branch --show-current 2>/dev/null || echo main)"
-echo "==> Pushing current branch ($BRANCH) so Actions uses latest code..."
-git push -u origin "$BRANCH" 2>/dev/null || git push origin "$BRANCH"
+echo "==> Pushing to origin/main..."
+git push -u origin main 2>/dev/null || git push origin main || true
 
-echo "==> Starting workflow: $WORKFLOW"
-gh workflow run "$WORKFLOW" --ref "$BRANCH"
-sleep 3
+if $FORCE; then
+  echo "==> Force-dispatching workflow on main..."
+  gh workflow run "$WORKFLOW" --ref main -f "force_release=true"
+else
+  echo "==> If you bumped version in pyproject.toml, CI should already be running."
+  echo "    To rebuild the same version: $0 --force"
+  LATEST="$(gh run list --workflow="$WORKFLOW" --branch=main --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
+  if [[ -z "$LATEST" || "$LATEST" == "null" ]]; then
+    echo "==> No recent run found — dispatching workflow on main..."
+    gh workflow run "$WORKFLOW" --ref main
+  fi
+fi
 
-RUN_ID="$(gh run list --workflow="$WORKFLOW" --limit 1 --json databaseId --jq '.[0].databaseId')"
+sleep 4
+RUN_ID="$(gh run list --workflow="$WORKFLOW" --branch=main --limit 1 --json databaseId --jq '.[0].databaseId')"
 [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]] || die "Could not find workflow run"
 
-echo "==> Run $RUN_ID — waiting for build (typically 3–6 minutes)..."
-
+echo "==> Run $RUN_ID — waiting (build + release, typically 5–8 minutes)..."
 gh run watch "$RUN_ID" --exit-status
 
 if $OPEN_BROWSER; then
   gh run view "$RUN_ID" --web
 fi
 
-mkdir -p "$OUT_DIR"
-rm -rf "$OUT_DIR"/bgrec-Windows "$OUT_DIR"/bgrec-Windows.zip
-gh run download "$RUN_ID" --name "$ARTIFACT_ZIP" --dir "$OUT_DIR"
-
 echo ""
-echo "==> Build complete"
-echo "    ZIP: $OUT_DIR/bgrec-Windows.zip"
-if [[ -f "$OUT_DIR/bgrec-Windows.zip" ]]; then
-  unzip -q -o "$OUT_DIR/bgrec-Windows.zip" -d "$OUT_DIR/bgrec-Windows"
-  echo "    Folder: $OUT_DIR/bgrec-Windows/"
-  echo ""
-  echo "Copy bgrec-Windows.zip to the target PC, unzip, and run:"
-  echo "  .\\install-portable.ps1"
-else
-  echo "    (Downloaded artifact contents are in $OUT_DIR)"
-fi
+echo "==> Done. GitHub Release v${VERSION} should include bgrec-Windows.zip and latest.json for OTA."
+echo "    Clients with auto_apply will update on next start or within ~6 hours."
