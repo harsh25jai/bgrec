@@ -97,7 +97,13 @@ class DriveClient:
                 log.info("Google OAuth token saved")
 
             try:
-                self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
+                self._service = build(
+                    "drive",
+                    "v3",
+                    credentials=creds,
+                    cache_discovery=False,
+                    static_discovery=True,
+                )
             except Exception as exc:
                 msg = str(exc).strip()
                 if "name:" in msg and "version:" in msg and "drive" in msg.lower():

@@ -139,6 +139,10 @@ jobs:
         shell: bash
         run: python scripts/verify_version_from_pyproject.py
 
+      - name: Verify Drive discovery documents
+        shell: bash
+        run: python scripts/verify_drive_discovery.py
+
       - name: Write bundled OTA metadata
         shell: bash
         run: echo "${{ github.repository }}" > config/github-repo.txt

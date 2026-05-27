@@ -75,6 +75,25 @@ COLLECT_ALL = [
 ]
 
 
+def google_discovery_add_data() -> list[str]:
+    """
+    Bundle discovery_cache/documents for static_discovery (frozen exe upload).
+
+    collect-all googleapiclient does not reliably include JSON on Windows CI.
+    """
+    try:
+        import googleapiclient.discovery_cache as discovery_cache
+    except ImportError:
+        return []
+
+    docs_dir = Path(discovery_cache.__file__).resolve().parent / "documents"
+    if not docs_dir.is_dir():
+        return []
+
+    sep = os.pathsep
+    return [f"--add-data={docs_dir}{sep}googleapiclient/discovery_cache/documents"]
+
+
 def check_build_prereqs() -> None:
     """Fail fast with a clear message before PyInstaller runs."""
     verify_script = ROOT / "scripts" / "verify_deps.py"
@@ -93,6 +112,21 @@ def check_build_prereqs() -> None:
             "  pip install -r requirements-windows.txt\n"
             "  pip install -e .\n"
             "  python scripts/verify_deps.py\n"
+        )
+
+    discovery_script = ROOT / "scripts" / "verify_drive_discovery.py"
+    result = subprocess.run(
+        [sys.executable, str(discovery_script)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        output = (result.stdout or "") + (result.stderr or "")
+        raise RuntimeError(
+            "Drive discovery check failed before PyInstaller.\n\n"
+            f"{output}\n"
+            "Install: pip install google-api-python-client\n"
         )
 
 
@@ -115,6 +149,7 @@ def pyinstaller_command() -> list[str]:
         cmd.append(f"--hidden-import={mod}")
     for pkg in COLLECT_ALL:
         cmd.append(f"--collect-all={pkg}")
+    cmd.extend(google_discovery_add_data())
     sep = os.pathsep
     pyproject = ROOT / "pyproject.toml"
     if pyproject.exists():
@@ -142,6 +177,22 @@ def verify_build(exe: Path) -> None:
             f"Build verification failed (exit {result.returncode}).\n"
             f"{combined[:3000]}\n\n"
             "If PyInstaller succeeded, try: python scripts/build_exe.py --no-verify"
+        )
+
+    discovery = subprocess.run(
+        [str(exe), "doctor"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=ROOT,
+    )
+    disc_out = (discovery.stdout or "") + (discovery.stderr or "")
+    if discovery.returncode != 0:
+        raise RuntimeError(
+            f"Drive discovery verification failed (exit {discovery.returncode}).\n"
+            f"{disc_out[:3000]}\n\n"
+            "Frozen exe is missing googleapiclient discovery JSON. "
+            "Check scripts/pyinstaller_build.py google_discovery_add_data()."
         )
 
 
