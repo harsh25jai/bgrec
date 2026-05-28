@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,15 +24,44 @@ VBS_LAUNCHER_NAME = "bgrec-logon-start.vbs"
 AUTOSTART_LOG_NAME = "autostart.log"
 
 
+def format_schtasks_delay(delay_seconds: int) -> str | None:
+    """mmmm:ss delay for schtasks /DELAY (ONLOGON / ONSTART / ONEVENT only)."""
+    if delay_seconds <= 0:
+        return None
+    minutes, seconds = divmod(delay_seconds, 60)
+    return f"{minutes:04d}:{seconds:02d}"
+
+
 class WindowsStartupManager:
     def __init__(self, executable: Path | None = None) -> None:
         self.executable = executable or self._default_executable()
+        self.last_schtasks_error: str | None = None
 
     @staticmethod
     def _default_executable() -> Path:
         from app.install.portable import preferred_bgrec_executable
 
         return preferred_bgrec_executable()
+
+    @staticmethod
+    def _schtasks_executable() -> str:
+        if sys.platform == "win32":
+            candidate = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "schtasks.exe"
+            if candidate.is_file():
+                return str(candidate)
+        return "schtasks"
+
+    @staticmethod
+    def _current_run_as_user() -> str:
+        user = os.environ.get("USERNAME", "")
+        domain = os.environ.get("USERDOMAIN", "")
+        if domain and user:
+            return f"{domain}\\{user}"
+        return user
+
+    @staticmethod
+    def vbs_run_command(vbs_path: Path) -> str:
+        return f'wscript.exe //B //NOLOGO "{vbs_path}"'
 
     def _start_arguments(self) -> str:
         """Autostart: background daemon without wiping logs on every logon."""
@@ -141,60 +171,66 @@ class WindowsStartupManager:
         except OSError:
             pass
 
-    def _create_logon_task(self, *, delay_seconds: int = 30) -> bool:
+    def _run_schtasks(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [self._schtasks_executable(), *args],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            creationflags=no_window_creationflags(),
+        )
+
+    def _schtasks_failure_message(self, result: subprocess.CompletedProcess[str]) -> str:
+        detail = (result.stderr or result.stdout or "").strip()
+        return f"exit {result.returncode}" + (f": {detail}" if detail else "")
+
+    def _create_logon_task(self, vbs: Path, *, delay_seconds: int = 30) -> bool:
         if sys.platform != "win32":
             return False
-        vbs = self._write_hidden_launcher()
-        if not vbs:
-            return False
-        tr = f'wscript.exe //B //NOLOGO "{vbs}"'
-        cmd = [
-            "schtasks",
-            "/Create",
-            "/TN",
-            TASK_NAME,
-            "/TR",
-            tr,
-            "/SC",
-            "ONLOGON",
-            "/RL",
-            "LIMITED",
-            "/F",
-        ]
-        if delay_seconds > 0:
-            minutes, seconds = divmod(delay_seconds, 60)
-            cmd.extend(["/DELAY", f"{minutes:04d}:{seconds:02d}"])
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                creationflags=no_window_creationflags(),
-            )
-            if result.returncode != 0:
-                log.warning(
-                    "schtasks create failed ({}): {}",
-                    result.returncode,
-                    (result.stderr or result.stdout or "").strip()[:500],
+        self.last_schtasks_error = None
+        tr = self.vbs_run_command(vbs)
+        run_user = self._current_run_as_user()
+        delay_token = format_schtasks_delay(delay_seconds)
+
+        # Try with explicit /RU + /NP (current user), then simpler forms if policy blocks /DELAY or /RL.
+        attempts: list[tuple[str, list[str]]] = []
+        base = ["/Create", "/TN", TASK_NAME, "/TR", tr, "/SC", "ONLOGON", "/F"]
+        if run_user:
+            with_user = [*base, "/RU", run_user, "/NP"]
+            if delay_token:
+                attempts.append(("ONLOGON + delay + /RU", [*with_user, "/DELAY", delay_token]))
+            attempts.append(("ONLOGON + /RU", with_user))
+        if delay_token:
+            attempts.append(("ONLOGON + delay", [*base, "/DELAY", delay_token]))
+        attempts.append(("ONLOGON", base))
+
+        self._delete_logon_task()
+        for label, cmd in attempts:
+            result = self._run_schtasks(cmd)
+            if result.returncode == 0:
+                log.info(
+                    "Scheduled task created: {} ({}, delay={}s)",
+                    TASK_NAME,
+                    label,
+                    delay_seconds,
                 )
-                return False
-            log.info("Scheduled task created: {} (delay={}s)", TASK_NAME, delay_seconds)
-            return True
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            log.warning("Could not create scheduled task {}: {}", TASK_NAME, exc)
-            return False
+                return True
+            msg = self._schtasks_failure_message(result)
+            self.last_schtasks_error = f"{label}: {msg}"
+            log.debug("schtasks {} failed — {}", label, msg)
+
+        log.warning(
+            "schtasks create failed after {} attempts. Last: {}",
+            len(attempts),
+            self.last_schtasks_error,
+        )
+        return False
 
     def _delete_logon_task(self) -> None:
         if sys.platform != "win32":
             return
         try:
-            subprocess.run(
-                ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
-                capture_output=True,
-                timeout=30,
-                creationflags=no_window_creationflags(),
-            )
+            self._run_schtasks(["/Delete", "/TN", TASK_NAME, "/F"])
         except (OSError, subprocess.TimeoutExpired):
             pass
 
@@ -216,12 +252,7 @@ class WindowsStartupManager:
         if sys.platform != "win32":
             return False
         try:
-            result = subprocess.run(
-                ["schtasks", "/Query", "/TN", TASK_NAME, "/FO", "LIST"],
-                capture_output=True,
-                timeout=15,
-                creationflags=no_window_creationflags(),
-            )
+            result = self._run_schtasks(["/Query", "/TN", TASK_NAME, "/FO", "LIST"])
             return result.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             return False
@@ -232,22 +263,35 @@ class WindowsStartupManager:
         use_task: bool = True,
         use_registry: bool = True,
         logon_delay_seconds: int = 30,
-    ) -> None:
+    ) -> bool:
+        """
+        Register autostart. Returns True if Task Scheduler registration succeeded
+        when use_task is True, or if use_task is False.
+        """
         import winreg
 
+        vbs = self._write_hidden_launcher()
+        task_ok = not use_task
         if use_task:
-            if not self._create_logon_task(delay_seconds=logon_delay_seconds):
-                log.warning("Task Scheduler registration failed — using Run key fallback only")
+            if vbs:
+                task_ok = self._create_logon_task(vbs, delay_seconds=logon_delay_seconds)
+            else:
+                task_ok = False
+                self.last_schtasks_error = "hidden launcher script could not be written"
+                log.warning("Task Scheduler registration skipped — no VBS launcher")
 
         if use_registry:
-            cmd = self._quoted_exe_command()
+            if vbs:
+                cmd = self.vbs_run_command(vbs)
+            else:
+                cmd = self._quoted_exe_command()
+                log.warning("Run key points at exe directly — VBS launcher missing")
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
                 winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, cmd)
             log.info("Startup Run key: {}", cmd)
             self._enable_startup_approved()
 
-        if use_task:
-            self._write_hidden_launcher()
+        return task_ok
 
     def disable(self) -> None:
         import winreg
@@ -276,8 +320,13 @@ class WindowsStartupManager:
             return ["Windows startup is only supported on Windows."]
         run_cmd = self.read_run_command()
         lines.append(f"Run command: {run_cmd or '(missing)'}")
+        if run_cmd and "wscript.exe" not in run_cmd.lower():
+            lines.append("Run key should use wscript.exe + VBS (re-run install-startup)")
         lines.append(f"StartupApproved\\Run\\bgrec: {self.read_startup_approved_status()}")
-        lines.append(f"Scheduled task '{TASK_NAME}': {'present' if self._task_exists() else 'missing'}")
+        task_present = self._task_exists()
+        lines.append(f"Scheduled task '{TASK_NAME}': {'present' if task_present else 'missing'}")
+        if not task_present and self.last_schtasks_error:
+            lines.append(f"Last schtasks error: {self.last_schtasks_error}")
         vbs = self.executable.parent / VBS_LAUNCHER_NAME
         lines.append(f"Hidden launcher script: {vbs.is_file()}")
         lines.append(f"Executable exists: {self.executable.is_file()}")

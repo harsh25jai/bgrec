@@ -17,33 +17,47 @@ if (-not (Test-Path $BinExe)) {
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $exeForVbs = $BinExe -replace '\\', '\\'
+$logForVbs = $AutoLog -replace '\\', '\\'
 
-$vbs = @"
-Set sh = CreateObject("WScript.Shell")
-Set fso = CreateObject("Scripting.FileSystemObject")
-logPath = "$AutoLog"
-Set log = fso.OpenTextFile(logPath, 8, True)
-log.WriteLine Now & " fix-windows-autostart: begin"
-sh.Run Chr(34) & "$exeForVbs" & Chr(34) & " start --background", 0, False
-log.WriteLine Now & " fix-windows-autostart: spawn issued"
-log.Close
-"@
-
-Set-Content -Path $VbsPath -Value $vbs -Encoding ASCII
+# Array join avoids PowerShell parsing & and " inside VBScript as PS syntax.
+$vbsLines = @(
+    'Set sh = CreateObject("WScript.Shell")'
+    'Set fso = CreateObject("Scripting.FileSystemObject")'
+    "logPath = ""$logForVbs"""
+    'Set log = fso.OpenTextFile(logPath, 8, True)'
+    'log.WriteLine Now & " fix-windows-autostart: begin"'
+    ('sh.Run Chr(34) & "' + $exeForVbs + '" & Chr(34) & " start --background --no-fresh", 0, False')
+    'log.WriteLine Now & " fix-windows-autostart: spawn issued"'
+    'log.Close'
+)
+Set-Content -Path $VbsPath -Value ($vbsLines -join "`r`n") -Encoding ASCII
 Write-Host "Wrote launcher: $VbsPath" -ForegroundColor Green
+
+$runUser = if ($env:USERDOMAIN -and $env:USERNAME) { "$env:USERDOMAIN\$env:USERNAME" } else { $env:USERNAME }
+$tr = "wscript.exe //B //NOLOGO `"$VbsPath`""
 
 # Task Scheduler (primary — more reliable than Run alone)
 schtasks /Delete /TN $TaskName /F 2>$null | Out-Null
-schtasks /Create /TN $TaskName `
-    /TR "wscript.exe //B //NOLOGO `"$VbsPath`"" `
-    /SC ONLOGON /DELAY 0000:45 /RL LIMITED /F
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "schtasks failed (exit $LASTEXITCODE). Try running as same user after sign-in."
-} else {
-    Write-Host "Scheduled task created: $TaskName (45s after logon)" -ForegroundColor Green
+$taskOk = $false
+foreach ($delay in @("0000:45", "")) {
+    $args = @("/Create", "/TN", $TaskName, "/TR", $tr, "/SC", "ONLOGON", "/RU", $runUser, "/NP", "/F")
+    if ($delay) { $args += @("/DELAY", $delay) }
+    & schtasks @args
+    if ($LASTEXITCODE -eq 0) {
+        $taskOk = $true
+        if ($delay) {
+            Write-Host "Scheduled task created: $TaskName (45s after logon)" -ForegroundColor Green
+        } else {
+            Write-Host "Scheduled task created: $TaskName (no delay)" -ForegroundColor Green
+        }
+        break
+    }
+}
+if (-not $taskOk) {
+    Write-Warning "schtasks failed (exit $LASTEXITCODE). Run key + VBS still applied."
 }
 
-# Run key (backup) — use VBS so console exe does not flash/fail at logon
+# Run key — use VBS so console exe does not flash/fail at logon
 $runCmd = "wscript.exe //B //NOLOGO `"$VbsPath`""
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "bgrec" -Value $runCmd
 Write-Host "Run key updated to VBS launcher" -ForegroundColor Green
