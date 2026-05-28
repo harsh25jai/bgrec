@@ -240,7 +240,11 @@ def status() -> None:
         table.add_row("Google auth", f"[green]{auth_msg}[/green]")
     else:
         table.add_row("Google auth", f"[yellow]{auth_msg}[/yellow]")
-    table.add_row("Startup registry", str(WindowsStartupManager().is_enabled()))
+    _startup = WindowsStartupManager()
+    table.add_row(
+        "Startup (Run / task)",
+        f"Run/task registered: {_startup.is_enabled()}",
+    )
     service_ver = get_portable_bin_version()
     if service_ver and not is_running_installed_binary():
         table.add_row("App version (service)", service_ver)
@@ -602,8 +606,14 @@ def install_startup() -> None:
     except Exception as exc:
         console.print(f"[red]Could not save config (startup not changed):[/red] {exc}")
         raise typer.Exit(1) from exc
-    WindowsStartupManager().enable()
-    console.print("[green]Startup entry added to HKCU Run registry[/green]")
+    WindowsStartupManager().enable(
+        use_task=cfg.startup.use_task_scheduler,
+        use_registry=cfg.startup.use_registry,
+        logon_delay_seconds=cfg.startup.logon_delay_seconds,
+    )
+    console.print("[green]Startup configured[/green] (Task Scheduler + Run key + StartupApproved)")
+    for line in WindowsStartupManager().diagnostics():
+        console.print(f"[dim]  {line}[/dim]")
 
 
 @app.command("uninstall-startup")
