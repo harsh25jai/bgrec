@@ -31,7 +31,7 @@ local_retention_days = 7
 delete_after_upload = true
 
 [startup]
-enabled = false
+enabled = true
 use_registry = true
 
 [logging]

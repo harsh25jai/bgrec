@@ -14,6 +14,7 @@ from app.config.settings import load_config
 from app.logging.setup import configure_logging, get_logger
 from app.service.singleton import is_daemon_lock_held
 from app.service.state import DaemonState
+from app.utils.windows_process import no_window_creationflags
 
 log = get_logger("daemon")
 
@@ -92,7 +93,7 @@ def is_bgrec_process(pid: int, expected_executable: str | None = None) -> bool:
                 capture_output=True,
                 text=True,
                 timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                creationflags=no_window_creationflags(),
             )
             cmd = (out.stdout or "").lower()
             return "bgrec" in cmd or "app.cli.main" in cmd
@@ -185,13 +186,11 @@ def spawn_background() -> int:
 
     exe = preferred_bgrec_executable()
     if getattr(sys, "frozen", False) or exe.name.lower() == "bgrec.exe":
-        cmd = [str(exe), "start", "--foreground"]
+        cmd = [str(exe), "start", "--foreground", "--no-fresh"]
     else:
         cmd = [sys.executable, "-m", "app.cli.main", "start", "--foreground"]
 
-    creationflags = 0
-    if sys.platform == "win32":
-        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    creationflags = no_window_creationflags(detached=True)
 
     with spawn_log.open("a", encoding="utf-8") as log_fh:
         log_fh.write(f"\n--- spawn {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
@@ -222,7 +221,12 @@ def stop_daemon() -> StopResult:
         return StopResult.NOT_RUNNING
 
     if sys.platform == "win32":
-        subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=False, capture_output=True)
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"],
+            check=False,
+            capture_output=True,
+            creationflags=no_window_creationflags(),
+        )
     else:
         os.kill(pid, signal.SIGTERM)
 
