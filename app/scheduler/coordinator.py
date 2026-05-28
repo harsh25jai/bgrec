@@ -145,7 +145,14 @@ class ServiceCoordinator:
         self._touch_heartbeat()
         self.state.save(self.state_path)
 
-        WindowsStartupManager().sync(self.config.startup.enabled)
+        if self.config.startup.enabled:
+            WindowsStartupManager().enable(
+                use_task=self.config.startup.use_task_scheduler,
+                use_registry=self.config.startup.use_registry,
+                logon_delay_seconds=self.config.startup.logon_delay_seconds,
+            )
+        else:
+            WindowsStartupManager().disable()
 
         self.sleep_guard.acquire()
         self.recorder.start()

@@ -80,7 +80,9 @@ class RetentionConfig:
 @dataclass
 class StartupConfig:
     enabled: bool = True
-    use_registry: bool = True  # HKCU Run key; alternative is scheduled task
+    use_registry: bool = True  # HKCU Run key (visible in Task Manager → Startup)
+    use_task_scheduler: bool = True  # ONLOGON task (more reliable than Run alone)
+    logon_delay_seconds: int = 30  # Wait after sign-in before starting (mic/desktop ready)
 
 
 @dataclass

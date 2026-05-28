@@ -240,7 +240,11 @@ def status() -> None:
         table.add_row("Google auth", f"[green]{auth_msg}[/green]")
     else:
         table.add_row("Google auth", f"[yellow]{auth_msg}[/yellow]")
-    table.add_row("Startup registry", str(WindowsStartupManager().is_enabled()))
+    _startup = WindowsStartupManager()
+    table.add_row(
+        "Startup (Run / task)",
+        f"Run/task registered: {_startup.is_enabled()}",
+    )
     service_ver = get_portable_bin_version()
     if service_ver and not is_running_installed_binary():
         table.add_row("App version (service)", service_ver)
@@ -592,6 +596,30 @@ def list_devices() -> None:
         console.print(f"  [{dev['index']}] {dev['name']} ({dev['channels']} ch)")
 
 
+@app.command("startup-diagnose")
+def startup_diagnose() -> None:
+    """Show why Windows logon autostart may not be running bgrec."""
+    mgr = WindowsStartupManager()
+    console.print("[bold]Windows autostart diagnostics[/bold]\n")
+    for line in mgr.diagnostics():
+        if "missing" in line.lower() or "disabled" in line.lower():
+            console.print(f"  [red]{line}[/red]")
+        elif "present" in line.lower() or "enabled" in line.lower():
+            console.print(f"  [green]{line}[/green]")
+        else:
+            console.print(f"  {line}")
+    log_path = _load().ensure_directories()["logs"] / "autostart.log"
+    if log_path.is_file():
+        console.print(f"\n[bold]Last lines of {log_path}:[/bold]")
+        tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-8:]
+        for ln in tail:
+            console.print(f"  [dim]{ln}[/dim]")
+    console.print(
+        "\n[dim]Fix on current build: run scripts/fix-windows-autostart.ps1 "
+        "(Task Scheduler + logged VBS). New releases: bgrec install-startup[/dim]"
+    )
+
+
 @app.command("install-startup")
 def install_startup() -> None:
     """Add application to Windows startup (HKCU Run — visible to user)."""
@@ -602,8 +630,14 @@ def install_startup() -> None:
     except Exception as exc:
         console.print(f"[red]Could not save config (startup not changed):[/red] {exc}")
         raise typer.Exit(1) from exc
-    WindowsStartupManager().enable()
-    console.print("[green]Startup entry added to HKCU Run registry[/green]")
+    WindowsStartupManager().enable(
+        use_task=cfg.startup.use_task_scheduler,
+        use_registry=cfg.startup.use_registry,
+        logon_delay_seconds=cfg.startup.logon_delay_seconds,
+    )
+    console.print("[green]Startup configured[/green] (Task Scheduler + Run key + StartupApproved)")
+    for line in WindowsStartupManager().diagnostics():
+        console.print(f"[dim]  {line}[/dim]")
 
 
 @app.command("uninstall-startup")

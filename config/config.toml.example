@@ -33,6 +33,8 @@ delete_after_upload = true
 [startup]
 enabled = true
 use_registry = true
+use_task_scheduler = true
+logon_delay_seconds = 30
 
 [logging]
 level = "INFO"
