@@ -43,14 +43,27 @@ def _bundled_drive_v3_discovery() -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def _apply_ca_bundle(ca_path: Path) -> str | None:
+    if not ca_path.is_file():
+        return None
+    ca = str(ca_path)
+    os.environ["SSL_CERT_FILE"] = ca
+    os.environ["REQUESTS_CA_BUNDLE"] = ca
+    os.environ["CURL_CA_BUNDLE"] = ca
+    return ca
+
+
 def configure_ssl_certificates() -> str | None:
     """
     Point TLS clients at a valid CA bundle (fixes PyInstaller one-file + Google APIs).
 
-    The background daemon can outlive the one-file parent's _MEI temp folder, so when
-    frozen we copy certifi's bundle into %LOCALAPPDATA%\\bgrec\\cacert.pem.
-    Returns the CA path used, or None if certifi is unavailable.
+    Prefer %LOCALAPPDATA%\\bgrec\\cacert.pem when present so long-running daemons keep
+    working after Windows deletes _MEIPASS.
     """
+    persistent = _persistent_ca_bundle()
+    if persistent.is_file():
+        return _apply_ca_bundle(persistent)
+
     try:
         import certifi
     except ImportError:
@@ -70,20 +83,15 @@ def configure_ssl_certificates() -> str | None:
         return None
 
     if getattr(sys, "frozen", False):
-        dest = _persistent_ca_bundle()
         try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if not dest.exists() or dest.stat().st_size != ca_path.stat().st_size:
-                shutil.copy2(ca_path, dest)
-            ca_path = dest
+            persistent.parent.mkdir(parents=True, exist_ok=True)
+            if not persistent.exists() or persistent.stat().st_size != ca_path.stat().st_size:
+                shutil.copy2(ca_path, persistent)
+            return _apply_ca_bundle(persistent)
         except OSError:
-            ca_path = ca_path
+            pass
 
-    ca = str(ca_path)
-    os.environ["SSL_CERT_FILE"] = ca
-    os.environ["REQUESTS_CA_BUNDLE"] = ca
-    os.environ["CURL_CA_BUNDLE"] = ca
-    return ca
+    return _apply_ca_bundle(ca_path)
 
 
 def ssl_certificate_status() -> tuple[bool, str]:
@@ -97,42 +105,44 @@ def ssl_certificate_status() -> tuple[bool, str]:
     return True, str(path)
 
 
-def configure_drive_discovery_cache() -> Path | None:
-    """
-    Copy Drive v3 discovery JSON to %LOCALAPPDATA%\\bgrec (survives _MEI temp cleanup).
-
-    The background daemon can outlive PyInstaller's extracted _MEIPASS folder when
-    Windows cleans temp; static_discovery then fails until this persistent copy exists.
-    """
-    src = _bundled_drive_v3_discovery()
-    if src is None:
-        return None
-
-    dest_dir = _persistent_discovery_dir()
-    dest = dest_dir / "drive.v3.json"
-    doc_dir = src.parent
-
-    if getattr(sys, "frozen", False):
-        try:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            if not dest.exists() or dest.stat().st_size != src.stat().st_size:
-                shutil.copy2(src, dest)
-            if dest.is_file():
-                doc_dir = dest_dir
-        except OSError:
-            if dest.is_file():
-                doc_dir = dest_dir
-            elif not src.is_file():
-                return None
-
+def _set_discovery_doc_dir(doc_dir: Path) -> Path | None:
     try:
         import googleapiclient.discovery_cache as discovery_cache
 
         discovery_cache.DISCOVERY_DOC_DIR = str(doc_dir)
     except ImportError:
         return None
-
     return doc_dir
+
+
+def configure_drive_discovery_cache() -> Path | None:
+    """
+    Use/copy Drive v3 discovery JSON under %LOCALAPPDATA%\\bgrec (survives _MEI cleanup).
+
+    Persistent copy is checked first so daemons keep working after %TEMP% cleanup.
+    """
+    persistent_dir = _persistent_discovery_dir()
+    persistent_doc = persistent_dir / "drive.v3.json"
+    if persistent_doc.is_file():
+        return _set_discovery_doc_dir(persistent_dir)
+
+    src = _bundled_drive_v3_discovery()
+    if src is None:
+        return None
+
+    if getattr(sys, "frozen", False):
+        try:
+            persistent_dir.mkdir(parents=True, exist_ok=True)
+            if not persistent_doc.exists() or persistent_doc.stat().st_size != src.stat().st_size:
+                shutil.copy2(src, persistent_doc)
+            if persistent_doc.is_file():
+                return _set_discovery_doc_dir(persistent_dir)
+        except OSError:
+            if persistent_doc.is_file():
+                return _set_discovery_doc_dir(persistent_dir)
+            return None
+
+    return _set_discovery_doc_dir(src.parent)
 
 
 def drive_discovery_status() -> tuple[bool, str]:
@@ -145,13 +155,16 @@ def drive_discovery_status() -> tuple[bool, str]:
 
     doc = get_static_doc("drive", "v3")
     if not doc:
-        persistent = _persistent_discovery_dir() / "drive.v3.json"
         return (
             False,
             "drive.v3 discovery missing "
-            f"(expected bundled copy or {persistent})",
+            f"(expected {persistent_doc_path()})",
         )
-    return True, str(_persistent_discovery_dir() / "drive.v3.json")
+    return True, str(persistent_doc_path())
+
+
+def persistent_doc_path() -> Path:
+    return _persistent_discovery_dir() / "drive.v3.json"
 
 
 def bootstrap_runtime() -> None:

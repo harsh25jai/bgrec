@@ -89,3 +89,10 @@ def test_upload_error_issue_code_discovery_is_upload() -> None:
 
     msg = "Google Drive API discovery failed (missing API metadata)"
     assert UploadQueue._issue_code_for_upload_error(msg) == "upload"
+
+
+def test_clear_issues_bumps_revision_once() -> None:
+    state = DaemonState(issues=[HealthIssue(code="a", message="1"), HealthIssue(code="b", message="2")])
+    assert state.clear_issues("a", "b")
+    assert state.issues == []
+    assert state.issues_revision == 1

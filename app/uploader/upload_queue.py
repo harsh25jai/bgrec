@@ -12,6 +12,7 @@ from app.config.settings import AppConfig
 from app.crypto.encryption import EncryptionManager
 from app.logging.setup import get_logger
 from app.service.state import DaemonState, PendingUpload
+from app.service.state_sync import sync_issues_from_disk
 from app.uploader.drive_client import DriveClient
 from app.utils.file_busy import is_file_in_use
 from app.utils.paths import safe_resolve
@@ -67,8 +68,9 @@ class UploadQueue:
             self.encryption.encrypt_file(source, enc_path)
             source.unlink(missing_ok=True)
             remote_name = source.name
+            sync_issues_from_disk(self.state, self.state_path)
             self.state.add_pending(enc_path, remote_name)
-            self.state.save(self.state_path)
+            self.state.save_runtime(self.state_path)
             log.info("Encrypted locally: {} (Drive upload will be {})", enc_path.name, remote_name)
             return enc_path
 
@@ -81,8 +83,9 @@ class UploadQueue:
             raise
         if self.config.retention.delete_after_upload:
             source.unlink(missing_ok=True)
+        sync_issues_from_disk(self.state, self.state_path)
         self.state.add_pending(dest, dest.name)
-        self.state.save(self.state_path)
+        self.state.save_runtime(self.state_path)
         log.info("Queued for upload: {}", dest.name)
         return dest
 
@@ -137,15 +140,13 @@ class UploadQueue:
             return self._process_pending_unlocked(blocking)
 
     def _persist_issue(self, code: str, message: str) -> None:
+        sync_issues_from_disk(self.state, self.state_path)
         if self.state.set_issue(code, message):
             self.state.save(self.state_path)
 
     def _clear_issues(self, *codes: str) -> None:
-        changed = False
-        for code in codes:
-            if self.state.clear_issue(code):
-                changed = True
-        if changed:
+        sync_issues_from_disk(self.state, self.state_path)
+        if self.state.clear_issues(*codes):
             self.state.save(self.state_path)
 
     @staticmethod
@@ -160,6 +161,7 @@ class UploadQueue:
         return "upload"
 
     def _process_pending_unlocked(self, blocking: bool = False) -> int:
+        sync_issues_from_disk(self.state, self.state_path)
         auth_key, auth_msg = self.drive.google_auth_status()
         if auth_key != "authenticated":
             log.debug("Google upload deferred: {}", auth_msg)
@@ -167,20 +169,24 @@ class UploadQueue:
             self._recover_orphans()
             return 0
 
+        self._clear_issues("google_auth")
+
         try:
             self.drive.authenticate(interactive=False)
-            self._clear_issues("google_auth", "tls")
         except Exception as exc:
             msg = str(exc)
             log.warning("Drive auth failed: {} — files stay queued locally", exc)
-            self._persist_issue(self._issue_code_for_upload_error(msg), msg)
+            code = "upload" if auth_key == "authenticated" else self._issue_code_for_upload_error(msg)
+            self._persist_issue(code, msg)
             self._recover_orphans()
             return 0
 
+        self._clear_issues("google_auth", "tls")
         self._recover_orphans()
         pending = list(self.state.pending_uploads)
 
         if not pending:
+            self._clear_issues("upload", "tls")
             return 0
 
         uploaded = 0
@@ -213,15 +219,17 @@ class UploadQueue:
             futures = {pool.submit(upload_one, p): p for p in pending}
             for fut in as_completed(futures):
                 item, ok, err = fut.result()
+                sync_issues_from_disk(self.state, self.state_path)
                 if ok:
                     self.state.remove_pending(Path(item.local_path))
                     uploaded += 1
+                    self.state.save_runtime(self.state_path)
                 else:
                     log.error("Failed upload after retries: {} — {}", item.remote_name, err)
                     if err:
                         code = self._issue_code_for_upload_error(err)
                         self.state.set_issue(code, err)
-                self.state.save(self.state_path)
+                        self.state.save(self.state_path)
 
         if uploaded:
             log.info("Uploaded {} file(s) to Drive", uploaded)
@@ -255,7 +263,8 @@ class UploadQueue:
         orphans.extend(self._recover_stale_plain_next_to_encrypted())
 
         if orphans:
-            self.state.save(self.state_path)
+            sync_issues_from_disk(self.state, self.state_path)
+            self.state.save_runtime(self.state_path)
             log.info("Recovered {} orphan pending upload(s)", len(orphans))
         return orphans
 
