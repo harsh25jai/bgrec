@@ -596,6 +596,30 @@ def list_devices() -> None:
         console.print(f"  [{dev['index']}] {dev['name']} ({dev['channels']} ch)")
 
 
+@app.command("startup-diagnose")
+def startup_diagnose() -> None:
+    """Show why Windows logon autostart may not be running bgrec."""
+    mgr = WindowsStartupManager()
+    console.print("[bold]Windows autostart diagnostics[/bold]\n")
+    for line in mgr.diagnostics():
+        if "missing" in line.lower() or "disabled" in line.lower():
+            console.print(f"  [red]{line}[/red]")
+        elif "present" in line.lower() or "enabled" in line.lower():
+            console.print(f"  [green]{line}[/green]")
+        else:
+            console.print(f"  {line}")
+    log_path = _load().ensure_directories()["logs"] / "autostart.log"
+    if log_path.is_file():
+        console.print(f"\n[bold]Last lines of {log_path}:[/bold]")
+        tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-8:]
+        for ln in tail:
+            console.print(f"  [dim]{ln}[/dim]")
+    console.print(
+        "\n[dim]Fix on current build: run scripts/fix-windows-autostart.ps1 "
+        "(Task Scheduler + logged VBS). New releases: bgrec install-startup[/dim]"
+    )
+
+
 @app.command("install-startup")
 def install_startup() -> None:
     """Add application to Windows startup (HKCU Run — visible to user)."""

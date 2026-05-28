@@ -20,6 +20,7 @@ TASK_NAME = "bgrec-recorder"
 # Task Manager "Enabled" state for a Run entry (see StartupApproved\Run).
 STARTUP_APPROVED_ENABLED = b"\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
 VBS_LAUNCHER_NAME = "bgrec-logon-start.vbs"
+AUTOSTART_LOG_NAME = "autostart.log"
 
 
 class WindowsStartupManager:
@@ -47,6 +48,47 @@ class WindowsStartupManager:
             return f'"{bgrec}" {self._start_arguments()}'
         return f'"{exe}" -m app.cli.main {self._start_arguments()}'
 
+    def _autostart_log_path(self) -> Path:
+        from app.config.settings import default_data_dirs
+
+        return default_data_dirs()["logs"] / AUTOSTART_LOG_NAME
+
+    @staticmethod
+    def _interpret_startup_approved(data: bytes | None) -> str:
+        if not data:
+            return "missing (Run entry may still run)"
+        if data.startswith(b"\x02") or data.startswith(b"\x06"):
+            return "enabled"
+        if data.startswith(b"\x03"):
+            return "disabled (03…)"
+        return f"unknown state (hex {data[:12].hex()}…)"
+
+    def read_run_command(self) -> str | None:
+        import winreg
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_READ) as key:
+                value, _ = winreg.QueryValueEx(key, APP_NAME)
+                return str(value)
+        except OSError:
+            return None
+
+    def read_startup_approved_status(self) -> str:
+        import winreg
+
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_RUN, 0, winreg.KEY_READ
+            ) as key:
+                data, _ = winreg.QueryValueEx(key, APP_NAME)
+                if isinstance(data, bytes):
+                    return self._interpret_startup_approved(data)
+                return "present (non-binary)"
+        except FileNotFoundError:
+            return "no entry (Run not gated by StartupApproved)"
+        except OSError as exc:
+            return f"unreadable ({exc})"
+
     def _write_hidden_launcher(self) -> Path | None:
         """
         VBS launcher runs bgrec with window style 0 (hidden).
@@ -62,9 +104,16 @@ class WindowsStartupManager:
         vbs_path = exe.parent / VBS_LAUNCHER_NAME
         exe_escaped = str(exe).replace('"', "")
         args = self._start_arguments()
+        log_path = str(self._autostart_log_path()).replace('"', "")
         content = (
             'Set sh = CreateObject("WScript.Shell")\n'
+            'Set fso = CreateObject("Scripting.FileSystemObject")\n'
+            f'logPath = "{log_path}"\n'
+            "Set log = fso.OpenTextFile(logPath, 8, True)\n"
+            'log.WriteLine Now & " VBS launcher: begin"\n'
             f'sh.Run Chr(34) & "{exe_escaped}" & Chr(34) & " {args}", 0, False\n'
+            'log.WriteLine Now & " VBS launcher: spawn issued"\n'
+            "log.Close\n"
         )
         vbs_path.write_text(content, encoding="utf-8")
         return vbs_path
@@ -225,13 +274,24 @@ class WindowsStartupManager:
         lines: list[str] = []
         if sys.platform != "win32":
             return ["Windows startup is only supported on Windows."]
-        lines.append(f"Run key entry present: {self.is_enabled()}")
-        lines.append(f"Scheduled task '{TASK_NAME}' present: {self._task_exists()}")
+        run_cmd = self.read_run_command()
+        lines.append(f"Run command: {run_cmd or '(missing)'}")
+        lines.append(f"StartupApproved\\Run\\bgrec: {self.read_startup_approved_status()}")
+        lines.append(f"Scheduled task '{TASK_NAME}': {'present' if self._task_exists() else 'missing'}")
         vbs = self.executable.parent / VBS_LAUNCHER_NAME
         lines.append(f"Hidden launcher script: {vbs.is_file()}")
         lines.append(f"Executable exists: {self.executable.is_file()}")
+        log_path = self._autostart_log_path()
+        if log_path.is_file():
+            lines.append(f"Last autostart.log write: {log_path.stat().st_mtime}")
+        else:
+            lines.append("autostart.log: not created yet (logon launcher never ran)")
+        spawn_log = self.executable.parent.parent / "logs" / "daemon-spawn.log"
+        if spawn_log.is_file():
+            lines.append(f"Last daemon-spawn.log write: {spawn_log.stat().st_mtime}")
+        else:
+            lines.append("daemon-spawn.log: missing")
         lines.append(
-            "Note: Autostart runs at user sign-in, not before login. "
-            "Disable Fast Startup if logon apps are skipped after restart."
+            "Autostart runs at user sign-in only. Use sign-out/in to test, not lock screen."
         )
         return lines
