@@ -186,7 +186,7 @@ def spawn_background() -> int:
 
     exe = preferred_bgrec_executable()
     if getattr(sys, "frozen", False) or exe.name.lower() == "bgrec.exe":
-        cmd = [str(exe), "start", "--foreground"]
+        cmd = [str(exe), "start", "--foreground", "--no-fresh"]
     else:
         cmd = [sys.executable, "-m", "app.cli.main", "start", "--foreground"]
 
