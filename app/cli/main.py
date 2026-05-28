@@ -36,16 +36,15 @@ from app.scheduler.coordinator import ServiceCoordinator
 from app.service.singleton import is_daemon_lock_held
 from app.service.daemon import (
     StopResult,
-    is_bgrec_process,
     is_daemon_active,
-    is_process_running,
-    reconcile_daemon_state,
     run_foreground,
     spawn_background,
     state_path,
     stop_daemon,
     wait_for_daemon_active,
+    reconcile_daemon_state,
 )
+from app.service.startup_ops import prepare_fresh_service_start
 from app.service.state import DaemonState
 from app.startup.windows_startup import WindowsStartupManager
 from app.uploader.drive_client import DriveClient
@@ -82,67 +81,93 @@ def _load() -> AppConfig:
 
 @app.command()
 def start(
-    background: bool = typer.Option(False, "--background", help="Run detached in background."),
-    foreground: bool = typer.Option(False, "--foreground", help="Run in foreground (used by daemon)."),
+    background: bool = typer.Option(
+        True,
+        "--background/--foreground",
+        help="Run detached in background (default). Use --foreground to stay in this terminal.",
+    ),
+    fresh: bool = typer.Option(
+        True,
+        "--fresh/--no-fresh",
+        help="Stop any running daemon and clear stale logs before starting (default).",
+    ),
 ) -> None:
-    """Start background recording service."""
+    """Start background recording service (fresh restart + upload nudge by default)."""
     cfg = _load()
     paths = cfg.ensure_directories()
-    configure_logging(paths["logs"], level=cfg.logging.level)
 
-    spath = state_path()
-    state = reconcile_daemon_state(DaemonState.load(spath), spath)
-    if is_daemon_active(state):
-        console.print(f"[yellow]Already running (pid={state.pid})[/yellow]")
-        raise typer.Exit(0)
+    if not background:
+        configure_logging(paths["logs"], level=cfg.logging.level)
 
-    # Orphan: bgrec process without mutex / stale state after a crash
-    if (
-        state.pid
-        and is_process_running(state.pid)
-        and is_bgrec_process(state.pid, state.daemon_executable)
-    ):
-        console.print(f"[dim]Cleaning up orphan process (pid={state.pid})…[/dim]")
-        stop_daemon()
-        time.sleep(1.0)
-        state = reconcile_daemon_state(DaemonState.load(spath), spath)
+        def factory():
+            return ServiceCoordinator(cfg)
 
-    if background and not foreground:
-        spawn_background()
-        state = wait_for_daemon_active(timeout=25.0)
-        if state:
-            console.print(f"[green]Started background daemon (pid={state.pid})[/green]")
-        elif is_daemon_lock_held():
-            console.print(
-                "[yellow]Daemon is still starting (PyInstaller may take 10–20s).[/yellow]\n"
-                "Check: bgrec status"
-            )
-        else:
-            console.print(
-                "[red]Failed to start daemon.[/red] Check logs in "
-                f"{paths['logs']} (daemon-spawn.log, bgrec.log).\n"
-                "[dim]PYI temp-dir warnings on spawn are usually harmless.[/dim]"
-            )
-            raise typer.Exit(1)
+        run_foreground(factory)
         return
 
-    def factory():
-        return ServiceCoordinator(cfg)
+    if fresh:
+        stop_result, logs_removed = prepare_fresh_service_start(paths["logs"])
+        if stop_result == StopResult.STOPPED:
+            console.print("[dim]Stopped previous daemon[/dim]")
+        if logs_removed:
+            console.print(f"[dim]Cleared {logs_removed} stale log file(s)[/dim]")
 
-    run_foreground(factory)
+    configure_logging(paths["logs"], level=cfg.logging.level)
+
+    spawn_background()
+    state = wait_for_daemon_active(timeout=25.0)
+    if state:
+        console.print(f"[green]Started background daemon (pid={state.pid})[/green]")
+        _print_upload_start_hint(cfg, paths, state)
+    elif is_daemon_lock_held():
+        console.print(
+            "[yellow]Daemon is still starting (PyInstaller may take 10–20s).[/yellow]\n"
+            "Check: bgrec status"
+        )
+        spath = state_path()
+        state = reconcile_daemon_state(DaemonState.load(spath), spath)
+        _print_upload_start_hint(cfg, paths, state)
+    else:
+        console.print(
+            "[red]Failed to start daemon.[/red] Check logs in "
+            f"{paths['logs']} (daemon-spawn.log, app.log).\n"
+            "[dim]PYI temp-dir warnings on spawn are usually harmless.[/dim]"
+        )
+        raise typer.Exit(1)
+
+
+def _print_upload_start_hint(cfg: AppConfig, paths: dict, state: DaemonState | None) -> None:
+    if not cfg.upload.enabled:
+        return
+    drive = DriveClient(
+        paths["credentials"],
+        credentials_file=cfg.google.credentials_file,
+        token_file=cfg.google.token_file,
+        app_folder_name=cfg.google.app_folder_name,
+    )
+    auth_key, auth_msg = drive.google_auth_status()
+    pending = len(state.pending_uploads) if state else 0
+    if auth_key == "authenticated":
+        if pending:
+            console.print(
+                f"[dim]Upload worker running — {pending} pending file(s) queued "
+                "(uploads start automatically)[/dim]"
+            )
+        else:
+            console.print("[dim]Upload worker running — no pending files[/dim]")
+    else:
+        console.print(f"[yellow]Upload deferred:[/yellow] {auth_msg}")
 
 
 @app.command()
 def restart(
     background: bool = typer.Option(True, "--background/--foreground", help="Restart detached."),
 ) -> None:
-    """Stop the daemon if running, then start it again."""
-    stop_daemon()
-    time.sleep(1.0)
+    """Stop the daemon if running, then start it again (fresh logs + upload nudge)."""
     if background:
-        start(background=True, foreground=False)
+        start(background=True, fresh=True)
     else:
-        start(background=False, foreground=False)
+        start(background=False, fresh=True)
 
 
 @app.command()

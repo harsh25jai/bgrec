@@ -27,6 +27,7 @@ from app.updater.manifest import (
     supports_upgrade,
 )
 from app.install.portable import get_installed_version_for_ota
+from app.utils.windows_process import no_window_creationflags
 from app.version import normalize_version
 
 log = get_logger("updater")
@@ -181,14 +182,10 @@ def spawn_unattended_update() -> None:
     else:
         cmd = [sys.executable, "-m", "app.cli.main", "update", "--yes", "--unattended"]
 
-    creationflags = 0
-    if sys.platform == "win32":
-        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-
     log.info("OTA: spawning unattended updater")
     subprocess.Popen(
         cmd,
-        creationflags=creationflags,
+        creationflags=no_window_creationflags(detached=True),
         close_fds=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -300,10 +297,9 @@ def run_periodic_update_check() -> None:
         if auto_apply_backoff_active() or is_apply_in_progress():
             return
         log.info("OTA: {}", result.message)
-        if try_auto_apply(cfg, result, unattended=True):
-            return
+        # Never apply inside the live daemon — stop_daemon() would kill this process
+        # and spawn a visible console updater. Use a hidden detached child instead.
         spawn_unattended_update()
-        time.sleep(2.0)
     finally:
         if sys.platform == "win32":
             import msvcrt
