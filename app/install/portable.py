@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from app.config.settings import default_data_dirs
+from app.utils.windows_process import no_window_creationflags
 from app.version import get_version, normalize_version
 
 
@@ -38,16 +39,13 @@ def is_running_installed_binary() -> bool:
 def probe_frozen_exe_version(exe: Path) -> str | None:
     if not exe.is_file():
         return None
-    flags = 0
-    if sys.platform == "win32":
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         result = subprocess.run(
             [str(exe), "version", "--porcelain"],
             capture_output=True,
             text=True,
             timeout=90,
-            creationflags=flags,
+            creationflags=no_window_creationflags(),
         )
         if result.returncode == 0:
             line = (result.stdout or "").strip().splitlines()
