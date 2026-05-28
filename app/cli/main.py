@@ -630,14 +630,29 @@ def install_startup() -> None:
     except Exception as exc:
         console.print(f"[red]Could not save config (startup not changed):[/red] {exc}")
         raise typer.Exit(1) from exc
-    WindowsStartupManager().enable(
+    mgr = WindowsStartupManager()
+    task_ok = mgr.enable(
         use_task=cfg.startup.use_task_scheduler,
         use_registry=cfg.startup.use_registry,
         logon_delay_seconds=cfg.startup.logon_delay_seconds,
     )
-    console.print("[green]Startup configured[/green] (Task Scheduler + Run key + StartupApproved)")
-    for line in WindowsStartupManager().diagnostics():
+    if task_ok:
+        console.print("[green]Startup configured[/green] (Task Scheduler + Run key + StartupApproved)")
+    else:
+        console.print(
+            "[yellow]Startup partially configured[/yellow] "
+            "(Run key + VBS; Task Scheduler failed)"
+        )
+        if mgr.last_schtasks_error:
+            console.print(f"[red]schtasks:[/red] {mgr.last_schtasks_error}")
+        console.print(
+            "[dim]Fix now: powershell -ExecutionPolicy Bypass -File "
+            "scripts\\fix-windows-autostart.ps1[/dim]"
+        )
+    for line in mgr.diagnostics():
         console.print(f"[dim]  {line}[/dim]")
+    if cfg.startup.use_task_scheduler and not mgr._task_exists():
+        raise typer.Exit(1)
 
 
 @app.command("uninstall-startup")
