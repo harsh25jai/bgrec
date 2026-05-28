@@ -82,7 +82,11 @@ def _load() -> AppConfig:
 
 @app.command()
 def start(
-    background: bool = typer.Option(False, "--background", help="Run detached in background."),
+    background: bool = typer.Option(
+        True,
+        "--background/--foreground",
+        help="Run detached in background (default). Use --foreground to stay in this terminal.",
+    ),
     foreground: bool = typer.Option(False, "--foreground", help="Run in foreground (used by daemon)."),
 ) -> None:
     """Start background recording service."""

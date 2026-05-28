@@ -20,6 +20,7 @@ from app.service.state import DaemonState
 from app.service.state_sync import sync_issues_from_disk
 from app.service.watchdog import Watchdog
 from app.uploader.drive_client import DriveClient
+from app.startup.windows_startup import WindowsStartupManager
 from app.uploader.upload_queue import UploadQueue
 
 log = get_logger("coordinator")
@@ -143,6 +144,8 @@ class ServiceCoordinator:
         self.state.clear_issue("daemon")
         self._touch_heartbeat()
         self.state.save(self.state_path)
+
+        WindowsStartupManager().sync(self.config.startup.enabled)
 
         self.sleep_guard.acquire()
         self.recorder.start()

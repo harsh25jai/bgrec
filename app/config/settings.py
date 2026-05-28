@@ -63,7 +63,7 @@ class UploadConfig:
     enabled: bool = True
     retry_max_attempts: int = 5
     retry_delay_seconds: int = 30
-    upload_workers: int = 2
+    upload_workers: int = 1
 
 
 @dataclass
@@ -79,7 +79,7 @@ class RetentionConfig:
 
 @dataclass
 class StartupConfig:
-    enabled: bool = False
+    enabled: bool = True
     use_registry: bool = True  # HKCU Run key; alternative is scheduled task
 
 
