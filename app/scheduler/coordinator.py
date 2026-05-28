@@ -17,6 +17,7 @@ from app.retention.cleanup import RetentionManager
 from app.service.singleton import DaemonInstanceLock
 from app.service.sleep_guard import SleepGuard
 from app.service.state import DaemonState
+from app.service.state_sync import sync_issues_from_disk
 from app.service.watchdog import Watchdog
 from app.uploader.drive_client import DriveClient
 from app.uploader.upload_queue import UploadQueue
@@ -72,11 +73,11 @@ class ServiceCoordinator:
         self._update_scheduler = None
 
     def _on_chunk(self, path: Path) -> None:
+        sync_issues_from_disk(self.state, self.state_path)
         self.state.last_chunk_at = time.time()
         self.state.chunks_recorded += 1
-        if self.state.clear_issue("recording"):
-            pass
-        self.state.save(self.state_path)
+        self.state.clear_issue("recording")
+        self.state.save_runtime(self.state_path)
         if self.config.upload.enabled:
             self.upload_queue.enqueue(path)
         pending_paths = {p.local_path for p in self.state.pending_uploads}
@@ -94,8 +95,10 @@ class ServiceCoordinator:
             self.upload_queue.nudge()
 
     def _touch_heartbeat(self) -> None:
+        sync_issues_from_disk(self.state, self.state_path)
         self.state.last_heartbeat_at = time.time()
-        self.state.save(self.state_path)
+        self.state.save_runtime(self.state_path)
+        sync_issues_from_disk(self.state, self.state_path)
 
     def _health_check(self) -> bool:
         self._touch_heartbeat()
@@ -108,6 +111,7 @@ class ServiceCoordinator:
             ago = time.time() - self.state.last_chunk_at
             if ago > stale_limit:
                 msg = f"No new audio chunk for {int(ago)}s"
+                sync_issues_from_disk(self.state, self.state_path)
                 if self.state.set_issue("recording", msg):
                     self.state.save(self.state_path)
                 self._recycle_recorder("no recent audio chunks (possible sleep or mic loss)")
@@ -116,6 +120,7 @@ class ServiceCoordinator:
             grace = self.config.recording.chunk_duration_seconds * 2
             if time.time() - self.state.started_at > grace:
                 msg = "No chunks recorded since service started"
+                sync_issues_from_disk(self.state, self.state_path)
                 if self.state.set_issue("recording", msg):
                     self.state.save(self.state_path)
         if self.config.upload.enabled and self.state.pending_uploads:

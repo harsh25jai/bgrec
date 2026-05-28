@@ -431,6 +431,11 @@ def login_google() -> None:
     drive.ensure_app_folder()
     if clear_persisted_health_issues(*ISSUES_CLEARED_AFTER_GOOGLE_LOGIN):
         console.print("[dim]Cleared stale health issues from daemon state[/dim]")
+    if is_daemon_active():
+        console.print(
+            "[dim]Daemon is running — it will pick up auth within ~15s. "
+            "To upload now: bgrec upload-pending[/dim]"
+        )
     console.print("[green]Google Drive authenticated successfully[/green]")
 
 

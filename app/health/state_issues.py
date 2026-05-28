@@ -14,7 +14,7 @@ def clear_persisted_health_issues(*codes: str) -> bool:
     if not path.exists():
         return False
     state = DaemonState.load(path)
-    changed = any(state.clear_issue(code) for code in codes)
+    changed = state.clear_issues(*codes)
     if changed:
         state.save(path)
     return changed

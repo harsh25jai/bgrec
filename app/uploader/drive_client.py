@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 from pathlib import Path
 
@@ -71,6 +72,11 @@ class DriveClient:
 
     def authenticate(self, interactive: bool = True) -> Credentials:
         with self._auth_lock:
+            if getattr(sys, "frozen", False):
+                from app.runtime_bootstrap import configure_drive_discovery_cache
+
+                configure_drive_discovery_cache()
+
             if self._service is not None:
                 creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
                 if creds and (creds.valid or creds.refresh_token):
